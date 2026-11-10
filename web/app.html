@@ -6,7 +6,7 @@
   <title>Plataforma — BolsaSim</title>
   <script>document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
     if (localStorage.getItem("palette") === "cb") document.documentElement.dataset.palette = "cb";</script>
-  <link rel="stylesheet" href="/static/styles.css?v=4">
+  <link rel="stylesheet" href="/static/styles.css?v=5">
 </head>
 <body>
 <header class="app-header">
@@ -52,7 +52,19 @@
     <div class="card chart-card">
       <div class="chart-head"><b id="c-sym"></b><span class="px" id="c-px"></span><span class="small" id="c-chg"></span>
         <span class="muted small" id="c-desc"></span><span id="c-regime"></span></div>
-      <div id="chart"></div>
+      <div class="chart-tools">
+        <div class="seg" id="tf-group" role="group" aria-label="Timeframe dos candles"></div>
+        <div class="ind-wrap">
+          <button class="btn sm" id="ind-btn" aria-expanded="false" aria-controls="ind-panel">📊 Indicadores</button>
+          <div class="ind-panel hidden" id="ind-panel"></div>
+        </div>
+        <div class="seg" id="draw-group" role="toolbar" aria-label="Ferramentas de desenho"></div>
+      </div>
+      <div class="chart-main" id="chart-main">
+        <div id="chart"></div>
+        <div class="chart-legend" id="chart-legend" aria-live="off"></div>
+      </div>
+      <div id="subcharts"></div>
     </div>
     <div class="card ticket" id="ticket">
       <div class="book">
@@ -235,6 +247,8 @@
 
 <div class="toast-wrap" id="toasts" aria-live="assertive"></div>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-<script src="/static/app.js?v=5"></script>
+<script src="/static/indicators.js?v=1"></script>
+<script src="/static/drawings.js?v=1"></script>
+<script src="/static/app.js?v=6"></script>
 </body>
 </html>
