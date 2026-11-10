@@ -291,7 +291,7 @@ html[data-theme="dark"] .banner.warning { background: #2a1f0b; border-color: #6b
 .seg button.active { background: var(--accent); color: var(--accent-ink); }
 #draw-group { margin-left: auto; }
 .ind-wrap { position: relative; }
-.ind-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 15; width: 380px; max-height: 460px; overflow: auto;
+.ind-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 15; width: 440px; max-height: 560px; overflow: auto;
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 10px; }
 .ind-head { display: flex; gap: 8px; align-items: baseline; padding: 2px 4px 8px; border-bottom: 1px solid var(--grid); }
 .ind-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; padding: 6px 4px;
@@ -303,6 +303,17 @@ html[data-theme="dark"] .banner.warning { background: #2a1f0b; border-color: #6b
 .ind-params input { width: 64px; padding: 3px 6px; font-size: 12px; }
 .swatch { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
 .swatch.vol { height: 10px; width: 8px; background: linear-gradient(var(--up), var(--down)); }
+.swatch-line { display: inline-block; width: 18px; height: 0; margin-right: 5px; vertical-align: middle; }
+.ma-row { display: grid; gap: 4px; padding: 8px 6px; border-bottom: 1px solid var(--grid); }
+.ma-row.off { opacity: .55; }
+.ma-line { display: flex; gap: 6px; align-items: center; }
+.ma-line select { flex: 1; min-width: 0; padding: 4px 6px; font-size: 12px; }
+.ma-line input[type=number] { width: 64px; padding: 4px 6px; font-size: 12px; }
+.ma-line input[type=color] { width: 34px; height: 28px; padding: 2px; flex: none; cursor: pointer; }
+.icon-sm { flex: none; width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
+  color: var(--text-2); cursor: pointer; font-size: 13px; }
+.icon-sm:hover { background: var(--panel-2); color: var(--text); }
+.ma-add { margin: 8px 6px 0; }
 .chart-main { position: relative; flex: 1; min-height: 360px; }
 #chart { position: absolute; inset: 0; }
 .chart-legend { position: absolute; top: 6px; left: 10px; right: 100px; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px 12px;
