@@ -10,11 +10,16 @@ const S = {
   nextEvent: null, ws: null, view: "trade", lastMid: {}, clockSkew: 0, bannerHtml: "",
 };
 const TZ_SHIFT = -new Date().getTimezoneOffset() * 60; // Lightweight Charts exibe o tempo em UTC
-const CHART_THEME = {
-  layout: {background: {color: "transparent"}, textColor: "#8892a3"},
-  grid: {vertLines: {color: "#1a2130"}, horzLines: {color: "#1a2130"}},
-  rightPriceScale: {borderColor: "#222b3b"},
-};
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// Cores dos gráficos sempre lidas do tema ativo (claro/escuro), nunca fixas no código.
+function chartTheme(timeScale = {}) {
+  return {
+    layout: {background: {color: "transparent"}, textColor: cssVar("--muted")},
+    grid: {vertLines: {color: cssVar("--grid")}, horzLines: {color: cssVar("--grid")}},
+    rightPriceScale: {borderColor: cssVar("--border")},
+    timeScale: {borderColor: cssVar("--border"), ...timeScale},
+  };
+}
 const ROLE = {ENTRY: "entrada", STOP_LOSS: "stop loss", BREAKEVEN: "breakeven", TRAILING: "trailing stop",
   TAKE_PROFIT: "take profit", MANUAL: "manual", LIQUIDATION: "liquidação de risco"};
 const STATUS = {ACTIVE: "Ativa", DAILY_LOCKED: "Travada (diário)", BREACHED: "Reprovada", PASSED: "Aprovada"};
@@ -89,7 +94,6 @@ function log(text) {
 
 // ── inicialização ──
 async function init() {
-  if (localStorage.getItem("classicColors") === "1") document.body.classList.add("classic-colors");
   S.me = await api("/api/me");
   (await api("/api/instruments")).forEach(i => { S.instruments[i.symbol] = i; });
   const win = Object.values(S.instruments).find(i => i.front && i.root === "WIN");
@@ -99,6 +103,13 @@ async function init() {
   S.quotes = await api(`/api/quotes?symbols=${encodeURIComponent([S.symbol, ...S.visible].join(","))}`);
   await selectSymbol(S.symbol);
   connect();
+  $("#theme-btn").onclick = () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  $("#lvl").onclick = () => showView("analytics");
+  applyTheme();
+  setupTips();
+  loadProgress();
+  setInterval(loadProgress, 15000);
+  setInterval(renderTape, 3000);
 }
 
 async function loadAccounts(selectId) {
@@ -120,6 +131,7 @@ function switchAccount(id) {
   S.linesKey = "";
   subscribe();
   renderAccount();
+  loadProgress();
   if (S.view === "analytics") loadAnalytics();
 }
 
@@ -132,7 +144,8 @@ function connect() {
     $("#conn").textContent = "reconectando…";
     $("#conn").classList.remove("on");
     if (e.code === 4401) { location.href = "/auth?mode=login"; return; }
-    setTimeout(connect, 2000);
+    // Antes de reconectar, confere a sessão: se expirou, api() leva ao login em vez de tentar para sempre.
+    setTimeout(() => api("/api/me").then(connect).catch(() => setTimeout(connect, 5000)), 2000);
   };
   ws.onmessage = e => onTick(JSON.parse(e.data));
 }
@@ -171,6 +184,7 @@ function handleNotice(n) {
       const v = +n.net_pnl_base;
       toast(`Trade encerrado em ${sym}: ${money(v)} (${roleName(n.reason)})`, v >= 0 ? "good" : "warning");
       log(`FECHADO ${sym} ${money(v)} · ${roleName(n.reason)}`);
+      setTimeout(loadProgress, 300);  // trade fechado pode render XP e conquistas
       break;
     }
     case "risk.breach":
@@ -283,8 +297,7 @@ function candleColors() {
 }
 function setupChart() {
   S.chart = LightweightCharts.createChart($("#chart"), {
-    ...CHART_THEME, autoSize: true,
-    timeScale: {borderColor: "#222b3b", timeVisible: true, secondsVisible: true},
+    ...chartTheme({timeVisible: true, secondsVisible: true}), autoSize: true,
     crosshair: {mode: LightweightCharts.CrosshairMode.Normal},
   });
   S.candles = S.chart.addCandlestickSeries(candleColors());
@@ -335,13 +348,13 @@ function renderPriceLines() {
   const a = S.account, lines = [];
   const pos = a && a.positions.find(p => p.symbol === S.symbol);
   if (pos) {
-    lines.push({price: pos.avg_price, color: "#b4bccb", title: `${pos.side === "BUY" ? "C" : "V"} ${num(pos.qty)} médio`, lineStyle: 0});
-    if (pos.sl != null) lines.push({price: pos.sl, color: "#ef4444", lineStyle: 2,
+    lines.push({price: pos.avg_price, color: cssVar("--text-2"), title: `${pos.side === "BUY" ? "C" : "V"} ${num(pos.qty)} médio`, lineStyle: 0});
+    if (pos.sl != null) lines.push({price: pos.sl, color: cssVar("--critical"), lineStyle: 2,
       title: pos.sl_role === "TRAILING" ? "Trailing" : pos.sl_role === "BREAKEVEN" ? "Breakeven" : "Stop"});
-    if (pos.tp != null) lines.push({price: pos.tp, color: "#22c55e", title: "Alvo", lineStyle: 2});
+    if (pos.tp != null) lines.push({price: pos.tp, color: cssVar("--good"), title: "Alvo", lineStyle: 2});
   }
   (a ? a.orders : []).filter(o => o.symbol === S.symbol && !o.reduce_only).forEach(o =>
-    lines.push({price: o.limit_price != null ? o.limit_price : o.stop_price, color: "#8892a3", lineStyle: 1,
+    lines.push({price: o.limit_price != null ? o.limit_price : o.stop_price, color: cssVar("--muted"), lineStyle: 1,
       title: `${o.kind === "LIMIT" ? "Lim" : "Stop"} ${o.side === "BUY" ? "C" : "V"} ${num(o.qty)}`}));
   const key = JSON.stringify(lines);
   if (key === S.linesKey) return;
@@ -553,9 +566,9 @@ const lineCharts = {};
 function lineChart(el, points, key) {
   let c = lineCharts[key];
   if (!c) {
-    const chart = LightweightCharts.createChart(el, {...CHART_THEME, autoSize: true,
-      timeScale: {borderColor: "#222b3b", timeVisible: true, secondsVisible: false}});
-    const series = chart.addLineSeries({color: "#60a5fa", lineWidth: 2, priceLineVisible: false});
+    const chart = LightweightCharts.createChart(el, {...chartTheme({timeVisible: true, secondsVisible: false}),
+      autoSize: true});
+    const series = chart.addLineSeries({color: cssVar("--series-1"), lineWidth: 2, priceLineVisible: false});
     c = lineCharts[key] = {chart, series};
   }
   const data = [];
@@ -689,18 +702,18 @@ function payoffPlot(el, r, spot) {
   let la = Y(a[a.length - 1]) + 4, lb = Y(b[b.length - 1]) + 4;
   if (Math.abs(la - lb) < 14) lb = la + (lb >= la ? 14 : -14);
   el.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="Payoff da estrutura no vencimento e hoje">
-    ${niceTicks(y0, y1, 5).map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:#1a2130"/>
-      <text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end" style="fill:#8892a3;font-size:11px">${fmt(v)}</text>`).join("")}
-    ${niceTicks(x0, x1, 6).map(v => `<text x="${X(v)}" y="${H - 12}" text-anchor="middle" style="fill:#8892a3;font-size:11px">${fmt(v)}</text>`).join("")}
-    <line x1="${m.l}" x2="${W - m.r}" y1="${Y(0)}" y2="${Y(0)}" style="stroke:#4b5563"/>
-    <line x1="${X(spot)}" x2="${X(spot)}" y1="${m.t}" y2="${H - m.b}" style="stroke:#4b5563;stroke-dasharray:3 3"/>
-    <text x="${X(spot) + 4}" y="${m.t + 10}" style="fill:#8892a3;font-size:11px">spot</text>
+    ${niceTicks(y0, y1, 5).map(v => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:var(--grid)"/>
+      <text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end" style="fill:var(--muted);font-size:11px">${fmt(v)}</text>`).join("")}
+    ${niceTicks(x0, x1, 6).map(v => `<text x="${X(v)}" y="${H - 12}" text-anchor="middle" style="fill:var(--muted);font-size:11px">${fmt(v)}</text>`).join("")}
+    <line x1="${m.l}" x2="${W - m.r}" y1="${Y(0)}" y2="${Y(0)}" style="stroke:var(--text-2)"/>
+    <line x1="${X(spot)}" x2="${X(spot)}" y1="${m.t}" y2="${H - m.b}" style="stroke:var(--text-2);stroke-dasharray:3 3"/>
+    <text x="${X(spot) + 4}" y="${m.t + 10}" style="fill:var(--muted);font-size:11px">spot</text>
     <path d="${path(b)}" style="fill:none;stroke:var(--series-2);stroke-width:2;stroke-dasharray:6 4"/>
     <path d="${path(a)}" style="fill:none;stroke:var(--series-1);stroke-width:2"/>
-    <text x="${W - m.r + 8}" y="${la}" style="fill:#b4bccb;font-size:11px">Vencimento</text>
-    <text x="${W - m.r + 8}" y="${lb}" style="fill:#b4bccb;font-size:11px">Hoje (T+0)</text>
+    <text x="${W - m.r + 8}" y="${la}" style="fill:var(--text-2);font-size:11px">Vencimento</text>
+    <text x="${W - m.r + 8}" y="${lb}" style="fill:var(--text-2);font-size:11px">Hoje (T+0)</text>
     <g class="hover" visibility="hidden">
-      <line class="hl" y1="${m.t}" y2="${H - m.b}" style="stroke:#8892a3"/>
+      <line class="hl" y1="${m.t}" y2="${H - m.b}" style="stroke:var(--muted)"/>
       <circle class="d1" r="5" style="fill:var(--series-1);stroke:var(--panel);stroke-width:2"/>
       <circle class="d2" r="5" style="fill:var(--series-2);stroke:var(--panel);stroke-width:2"/>
     </g>
@@ -750,12 +763,10 @@ async function setupAccountView() {
     <span class="small">Apelido público no ranking: <b>${esc(S.me.alias)}</b></span></p>`;
   const plans = await api("/api/plans");
   $("#new-plan").innerHTML = plans.map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join("");
-  $("#pref-classic").checked = document.body.classList.contains("classic-colors");
-  $("#pref-classic").onchange = e => {
-    document.body.classList.toggle("classic-colors", e.target.checked);
-    localStorage.setItem("classicColors", e.target.checked ? "1" : "0");
-    S.candles.applyOptions(candleColors());
-  };
+  $("#pref-cb").checked = document.documentElement.dataset.palette === "cb";
+  $("#pref-cb").onchange = e => setPalette(e.target.checked);
+  $("#pref-dark").checked = document.documentElement.dataset.theme === "dark";
+  $("#pref-dark").onchange = e => setTheme(e.target.checked ? "dark" : "light");
   $("#logout").onclick = async () => { await api("/api/auth/logout", {method: "POST"}); location.href = "/"; };
   $("#new-acc").onclick = async () => {
     try {
@@ -793,6 +804,105 @@ function renderAccountsTable() {
       catch (e) { toast(e.message, "critical"); }
     };
   });
+}
+
+// ── tema ──
+function applyTheme() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  $("#theme-btn").textContent = dark ? "☀️" : "🌙";
+  if ($("#pref-dark")) $("#pref-dark").checked = dark;
+  if (S.chart) {
+    S.chart.applyOptions(chartTheme());
+    S.candles.applyOptions(candleColors());
+  }
+  Object.values(lineCharts).forEach(c => {
+    c.chart.applyOptions(chartTheme());
+    c.series.applyOptions({color: cssVar("--series-1")});
+  });
+  S.linesKey = "";
+  renderPriceLines();
+}
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem("theme", theme);
+  applyTheme();
+}
+function setPalette(colorblind) {
+  if (colorblind) document.documentElement.dataset.palette = "cb";
+  else delete document.documentElement.dataset.palette;
+  localStorage.setItem("palette", colorblind ? "cb" : "classic");
+  applyTheme();
+}
+
+// ── letreiro de cotações (favoritos) ──
+function renderTape() {
+  const items = S.fav.filter(s => S.quotes[s]).map(s => {
+    const q = S.quotes[s], v = change(q);
+    return `<span class="tape-item" data-sym="${s}" title="${esc(S.instruments[s].description)}"><b>${s}</b>
+      <span class="mono">${price((q.bid + q.ask) / 2, s)}</span><span class="${signCls(v)}">${changeText(v)}</span></span>`;
+  }).join("");
+  if (!items) return;
+  $("#tape").innerHTML = items + items;  // duplicado: rolagem contínua
+  $$("#tape .tape-item").forEach(el => { el.onclick = () => { showView("trade"); selectSymbol(el.dataset.sym); }; });
+}
+
+// ── dicas de estudo ──
+const TIPS = [
+  "<b>Stop loss primeiro.</b> Defina quanto aceita perder antes de entrar; o tamanho da posição vem depois.",
+  "<b>Payoff:</b> se o alvo é 2× o stop, você pode errar mais da metade das vezes e ainda lucrar.",
+  "<b>Spread</b> é custo: em ativos ilíquidos ele come o lucro de operações curtas. Compare bid e ask antes.",
+  "<b>Mini-índice (WIN):</b> cada ponto vale R$ 0,20 por contrato; 100 pontos = R$ 20.",
+  "<b>Mini-dólar (WDO):</b> cada ponto vale R$ 10 por contrato; meio ponto é o menor tick.",
+  "<b>Lote padrão:</b> ações na B3 são negociadas de 100 em 100. Para menos, use o fracionário (ticker com F).",
+  "<b>FIIs</b> distribuem rendimentos mensais; o preço oscila menos que ações, mas também sofre com juros altos.",
+  "<b>DI1</b> é negociado em taxa: comprar DI = apostar que os juros sobem.",
+  "<b>Opções:</b> o comprador arrisca só o prêmio; o vendedor recebe o prêmio e assume o risco. Theta corre contra quem compra.",
+  "<b>Notícias de alto impacto</b> (Payroll, Copom) alargam o spread e geram slippage. Muitos traders ficam de fora.",
+  "<b>Trailing stop</b> deixa o lucro correr sem devolver tudo quando o mercado vira.",
+  "<b>Breakeven</b> tira o risco do trade, mas se for movido cedo demais o ruído te tira da operação.",
+  "<b>Perda diária máxima</b> existe para impedir o “dia de revanche”. Bateu o limite? O dia acabou.",
+  "<b>Profit Factor</b> acima de 1,5 com dezenas de trades é sinal de vantagem real, não de sorte.",
+  "<b>Diversificar</b> entre classes (ações, FIIs, juros) reduz o risco de um único evento derrubar tudo.",
+];
+function setupTips() {
+  let i = Math.floor(Date.now() / 86_400_000) % TIPS.length;  // a dica do dia muda a cada 24h
+  const show = () => { $("#tip-text").innerHTML = TIPS[i]; };
+  $("#tip-next").onclick = () => { i = (i + 1) % TIPS.length; show(); };
+  show();
+}
+
+// ── gamificação: nível, XP e conquistas ──
+async function loadProgress() {
+  if (!S.accountId) return;
+  const accountId = S.accountId;
+  try {
+    const p = await api(`/api/accounts/${accountId}/progress`);
+    if (accountId !== S.accountId) return;
+    const unlocked = new Set(p.achievements.filter(a => a.done).map(a => a.id));
+    if (S.progressAccount === accountId && S.unlocked) {  // só celebra o que mudou nesta conta
+      p.achievements.filter(a => a.done && !S.unlocked.has(a.id))
+        .forEach(a => toast(`🏆 Conquista desbloqueada: ${a.icon} ${a.title} (+${a.xp} XP)`, "trophy"));
+      if (p.level > S.level) toast(`⭐ Você subiu para o nível ${p.level}: ${p.title}!`, "trophy");
+    }
+    S.unlocked = unlocked;
+    S.level = p.level;
+    S.progressAccount = accountId;
+    renderProgress(p);
+  } catch (e) { /* informativo: ignora falha transitória */ }
+}
+function renderProgress(p) {
+  const width = `${Math.round(p.progress * 100)}%`, maxed = p.next_level_xp <= p.level_floor;
+  $("#lvl-n").textContent = p.level;
+  $("#lvl-title").textContent = p.title;
+  $("#lvl-xp").textContent = maxed ? `${p.xp} XP · nível máximo` : `${p.xp} / ${p.next_level_xp} XP`;
+  $("#lvl-bar").style.width = width;
+  $("#jr-title").textContent = `Nível ${p.level} · ${p.title}`;
+  $("#jr-xp").textContent = `${p.xp} XP · ${p.unlocked}/${p.achievements.length} conquistas` +
+    (maxed ? "" : ` · faltam ${p.next_level_xp - p.xp} XP para o próximo nível`);
+  $("#jr-bar").style.width = width;
+  $("#jr-ach").innerHTML = p.achievements.map(a => `<div class="ach ${a.done ? "done" : ""}">
+    <span class="ic" aria-hidden="true">${a.icon}</span>
+    <div><b>${esc(a.title)}${a.done ? " ✓" : ""}</b><span>${esc(a.description)} · +${a.xp} XP</span></div></div>`).join("");
 }
 
 init().catch(e => { if (e.message !== "Sessão expirada.") toast(e.message, "critical"); });

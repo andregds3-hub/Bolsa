@@ -4,10 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Entrar — BolsaSim</title>
-  <link rel="stylesheet" href="/static/styles.css?v=3">
+  <script>document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+    if (localStorage.getItem("palette") === "cb") document.documentElement.dataset.palette = "cb";</script>
+  <link rel="stylesheet" href="/static/styles.css?v=4">
 </head>
 <body>
 <div class="auth-wrap">
+  <aside class="auth-side">
+    <a class="logo on-dark" href="/">Bolsa<span>Sim</span></a>
+    <h2>Seu campo de treinamento na bolsa.</h2>
+    <ul>
+      <li>💰 R$ 50 mil simulados para começar</li>
+      <li>🇧🇷 900+ ativos: ações, FIIs, mini-índice, dólar, opções</li>
+      <li>🎮 Níveis, XP e conquistas que premiam disciplina</li>
+      <li>📚 Dicas de estudo em cada tela</li>
+    </ul>
+    <p class="small" style="opacity:.75">Ambiente simulado: nenhum dinheiro real envolvido.</p>
+  </aside>
+  <div class="auth-main">
   <div class="card auth-card">
     <a class="logo" href="/">Bolsa<span>Sim</span></a>
     <div class="tabs" role="tablist" style="margin-top:16px">
@@ -53,6 +67,7 @@
       <button class="btn primary" style="width:100%" type="submit">Acessar Plataforma</button>
       <p class="muted small" style="margin-top:12px">Esqueceu a senha? A recuperação por e-mail chega com o Keycloak (próxima fase).</p>
     </form>
+  </div>
   </div>
 </div>
 <script>

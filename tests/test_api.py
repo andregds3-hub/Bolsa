@@ -49,6 +49,9 @@ def test_full_trading_flow_journal_ranking_and_lgpd(client):
     assert snap["positions"] == [] and snap["orders"] == []
     journal = client.get(f"/api/accounts/{acc['id']}/analytics").json()
     assert journal["metrics"]["trades"] == 1 and journal["trades"][0]["reason"] == "MANUAL"
+    prog = client.get(f"/api/accounts/{acc['id']}/progress").json()
+    unlocked = {a["id"] for a in prog["achievements"] if a["done"]}
+    assert {"primeiro_trade", "derivativos"} <= unlocked and prog["xp"] > 0
 
     board = client.get("/api/leaderboard").json()["rows"]
     assert any(r["alias"] == me["alias"] for r in board) and any(r["bot"] for r in board)
