@@ -316,6 +316,10 @@ function setupChart() {
     fmtPrice: v => price(v, S.symbol),
     onChange: items => localStorage.setItem(`drawings:${S.symbol}`, JSON.stringify(items)),
     onToolEnd: renderDrawTools,
+    onSelect: index => {
+      const del = $("#draw-group [data-act=delete]");
+      if (del) del.disabled = index === null;
+    },
   });
   setupChartTools();
   buildIndicators();
@@ -373,10 +377,6 @@ function updateCandle(ts) {
 const PRICE_SCALE_WIDTH = 86;  // mesma largura em todos os painéis: candles e osciladores ficam alinhados
 const CHART_TFS = [[5, "5s"], [15, "15s"], [60, "1m"], [300, "5m"], [900, "15m"]];
 const IND_DEFS = {
-  ema: {label: "MME", name: "Média móvel exponencial", pane: "main", params: {period: 9}, color: "--ind-1",
-    info: "Média que dá mais peso aos preços recentes e reage rápido. Preço acima dela sugere tendência de alta."},
-  sma: {label: "MMS", name: "Média móvel simples", pane: "main", params: {period: 21}, color: "--ind-2",
-    info: "Média dos últimos N fechamentos. A MME curta cruzando a MMS longa é um sinal clássico de virada de tendência."},
   bb: {label: "Bollinger", name: "Bandas de Bollinger", pane: "main", params: {period: 20, mult: 2}, color: "--ind-3",
     info: "Média ± 2 desvios-padrão. Bandas estreitas indicam baixa volatilidade, que costuma anteceder movimentos fortes."},
   vwap: {label: "VWAP", name: "Preço médio ponderado por volume", pane: "main", params: {}, color: "--ind-4",
@@ -394,12 +394,105 @@ const PARAM_NAMES = {period: "Período", mult: "Desvios", fast: "Rápida", slow:
 const DRAW_TOOLS = [[null, "↖", "Cursor: mover e dar zoom no gráfico"], ["trend", "╱", "Linha de tendência"],
   ["hline", "―", "Linha horizontal (suporte/resistência)"], ["rect", "▭", "Retângulo (zona de preço)"],
   ["fib", "Fib", "Fibonacci de retração"], ["ruler", "📏", "Régua: mede a variação em pontos, % e candles"]];
+// Médias móveis: lista livre (quantas quiser), cada uma com tipo, período, preço, cor, estilo e espessura.
+const MA_TYPES = {SMA: ["MMS", "Simples"], EMA: ["MME", "Exponencial"], WMA: ["MMP", "Ponderada"],
+  SMMA: ["MMW", "Suavizada (Wilder)"], HMA: ["Hull", "Hull"], DEMA: ["DEMA", "Dupla exponencial"],
+  TEMA: ["TEMA", "Tripla exponencial"]};
+const MA_SOURCES = {close: "Fechamento", open: "Abertura", high: "Máxima", low: "Mínima", hl2: "(Máx+Mín)/2",
+  hlc3: "(Máx+Mín+Fech)/3", ohlc4: "(Ab+Máx+Mín+Fech)/4"};
+// valor = LineStyle do Lightweight Charts; último campo = borda CSS usada na amostra da legenda
+const LINE_STYLES = [[0, "Contínua", "solid"], [2, "Tracejada", "dashed"], [1, "Pontilhada", "dotted"],
+  [3, "Tracejado longo", "dashed"], [4, "Pontilhado espaçado", "dotted"]];
+const MA_COLORS = ["#7c3aed", "#0891b2", "#db2777", "#a16207", "#2563eb", "#059669", "#ea580c", "#64748b"];
+const MAX_MAS = 20;
+const MA_INFO = "Simples: média aritmética. Exponencial: mais peso aos preços recentes. Ponderada: pesos lineares. " +
+  "Wilder: suavização lenta (a do IFR). Hull, DEMA e TEMA: reduzem o atraso. Cruzamentos entre uma média curta " +
+  "e uma longa são um sinal clássico de mudança de tendência.";
+
+function newMovingAverage(overrides = {}) {
+  const used = new Set((S.mas || []).map(m => m.color));
+  return {id: Math.random().toString(36).slice(2, 9), type: "EMA", period: 20, source: "close",
+    color: MA_COLORS.find(c => !used.has(c)) || MA_COLORS[0], style: 0, width: 2, visible: true, ...overrides};
+}
+function loadMovingAverages() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("movingAverages"));
+    if (Array.isArray(saved)) return saved;
+  } catch (e) { /* lista corrompida: recria */ }
+  let old = {};  // migração: a versão anterior tinha uma MME e uma MMS fixas
+  try { old = JSON.parse(localStorage.getItem("indicators") || "{}"); } catch (e) { /* ignora */ }
+  return [
+    newMovingAverage({type: "EMA", period: (old.ema && old.ema.period) || 9, visible: !old.ema || old.ema.on !== false,
+      color: MA_COLORS[0]}),
+    newMovingAverage({type: "SMA", period: (old.sma && old.sma.period) || 21, visible: !old.sma || old.sma.on !== false,
+      color: MA_COLORS[1]}),
+  ];
+}
+const maLabel = m => `${MA_TYPES[m.type][0]} ${m.period}${m.source === "close" ? "" : " · " + MA_SOURCES[m.source]}`;
+const maSwatch = m => `<i class="swatch-line" style="border-top:${Math.max(2, m.width)}px ` +
+  `${(LINE_STYLES.find(s => s[0] === m.style) || LINE_STYLES[0])[2]} ${m.color}"></i>`;
+function maRow(m) {
+  const opt = (value, label, current) => `<option value="${value}"${String(value) === String(current) ? " selected" : ""}>${label}</option>`;
+  return `<div class="ma-row${m.visible ? "" : " off"}" data-ma="${m.id}">
+    <div class="ma-line">
+      <button class="icon-sm" data-act="toggle" title="${m.visible ? "Ocultar" : "Mostrar"} esta média"
+        aria-label="${m.visible ? "Ocultar" : "Mostrar"} esta média" aria-pressed="${m.visible}">${m.visible ? "👁" : "⊘"}</button>
+      <select data-f="type" aria-label="Tipo de média">${Object.entries(MA_TYPES).map(([k, [short, long]]) =>
+        opt(k, `${long} (${short})`, m.type)).join("")}</select>
+      <input type="number" data-f="period" min="1" max="500" value="${m.period}" aria-label="Período" title="Período (candles)">
+      <button class="icon-sm" data-act="remove" title="Remover esta média" aria-label="Remover esta média">✕</button>
+    </div>
+    <div class="ma-line">
+      <input type="color" data-f="color" value="${m.color}" aria-label="Cor da linha" title="Cor da linha">
+      <select data-f="style" aria-label="Estilo da linha">${LINE_STYLES.map(([v, label]) => opt(v, label, m.style)).join("")}</select>
+      <select data-f="width" aria-label="Espessura da linha">${[1, 2, 3, 4].map(v => opt(v, `${v} px`, m.width)).join("")}</select>
+      <select data-f="source" aria-label="Preço usado no cálculo" title="Preço usado no cálculo">${
+        Object.entries(MA_SOURCES).map(([k, label]) => opt(k, label, m.source)).join("")}</select>
+    </div>
+  </div>`;
+}
+function onMovingAveragesChanged(rerenderPanel) {
+  localStorage.setItem("movingAverages", JSON.stringify(S.mas));
+  if (rerenderPanel) renderIndicatorPanel();
+  buildIndicators();
+  refreshIndicators(true);
+}
+function bindMovingAverageEditor() {
+  const list = $("#ma-list"), find = el => S.mas.find(m => m.id === el.closest("[data-ma]").dataset.ma);
+  const apply = e => {
+    const field = e.target.dataset.f;
+    if (!field) return;
+    const m = find(e.target);
+    let value = e.target.value;
+    if (field === "period") {
+      value = Math.round(Number(value));
+      if (!(value >= 1 && value <= 500)) { e.target.value = m.period; return; }
+    }
+    if (field === "style" || field === "width") value = Number(value);
+    m[field] = value;
+    onMovingAveragesChanged(false);  // mantém o foco no campo que está sendo editado
+  };
+  list.addEventListener("change", apply);
+  list.addEventListener("input", e => { if (e.target.dataset.f === "color") apply(e); });  // cor ao vivo
+  list.addEventListener("click", e => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    const m = find(btn);
+    if (btn.dataset.act === "toggle") m.visible = !m.visible;
+    else S.mas = S.mas.filter(x => x !== m);
+    onMovingAveragesChanged(true);
+  });
+  $("#ma-add").onclick = () => {
+    S.mas.push(newMovingAverage());
+    onMovingAveragesChanged(true);
+  };
+}
 const ohlc = ({time, open, high, low, close}) => ({time, open, high, low, close});
 const withAlpha = (color, alpha) => /^#[0-9a-f]{6}$/i.test(color) ? color + alpha : color;
 
 function loadIndicatorSettings() {
   const settings = Object.fromEntries(Object.entries(IND_DEFS).map(([id, d]) =>
-    [id, {on: ["ema", "sma", "volume"].includes(id), ...d.params}]));
+    [id, {on: id === "volume", ...d.params}]));
   try {
     const saved = JSON.parse(localStorage.getItem("indicators") || "{}");
     for (const id of Object.keys(settings)) Object.assign(settings[id], saved[id] || {});
@@ -409,6 +502,8 @@ function loadIndicatorSettings() {
 function setupChartTools() {
   if (!CHART_TFS.some(([tf]) => tf === S.tf)) S.tf = 60;
   S.ind = loadIndicatorSettings();
+  S.mas = loadMovingAverages();
+  $("#ind-panel").addEventListener("click", e => e.stopPropagation());  // cliques dentro do painel não o fecham
   $("#tf-group").innerHTML = CHART_TFS.map(([tf, label]) =>
     `<button data-tf="${tf}" title="Candles de ${label}">${label}</button>`).join("");
   $$("#tf-group button").forEach(b => {
@@ -416,9 +511,11 @@ function setupChartTools() {
   });
   $("#draw-group").innerHTML = DRAW_TOOLS.map(([tool, icon, title]) =>
     `<button data-tool="${tool || ""}" title="${title}" aria-label="${title}">${icon}</button>`).join("") +
+    `<button data-act="delete" disabled title="Apagar o desenho selecionado (tecla Delete)" aria-label="Apagar o desenho selecionado">✕</button>` +
     `<button data-act="undo" title="Desfazer o último desenho" aria-label="Desfazer o último desenho">↶</button>` +
     `<button data-act="clear" title="Apagar os desenhos deste ativo" aria-label="Apagar os desenhos deste ativo">🗑</button>`;
   $$("#draw-group [data-tool]").forEach(b => { b.onclick = () => { S.drawing.setTool(b.dataset.tool || null); renderDrawTools(); }; });
+  $("#draw-group [data-act=delete]").onclick = () => S.drawing.removeSelected();
   $("#draw-group [data-act=undo]").onclick = () => S.drawing.undo();
   $("#draw-group [data-act=clear]").onclick = () => {
     if (S.drawing.items.length && confirm("Apagar todos os desenhos deste ativo?")) S.drawing.clear();
@@ -450,8 +547,12 @@ function onIndicatorsChanged() {
   refreshIndicators(true);
 }
 function renderIndicatorPanel() {
-  $("#ind-panel").innerHTML = `<div class="ind-head"><b>Indicadores</b>
-    <span class="muted small">calculados sobre os candles do gráfico</span></div>` +
+  $("#ind-panel").innerHTML = `<div class="ind-head"><b>Médias móveis</b>
+      <span class="muted small">adicione quantas quiser</span><span class="info" tabindex="0" title="${esc(MA_INFO)}">?</span></div>
+    <div id="ma-list">${S.mas.map(maRow).join("") || `<div class="empty small">Nenhuma média no gráfico.</div>`}</div>
+    <button class="btn sm ma-add" id="ma-add"${S.mas.length >= MAX_MAS ? " disabled" : ""}>+ Adicionar média</button>
+    <div class="ind-head" style="margin-top:12px"><b>Outros indicadores</b>
+      <span class="muted small">calculados sobre os candles do gráfico</span></div>` +
     Object.entries(IND_DEFS).map(([id, d]) => `<div class="ind-row">
       <label class="check"><input type="checkbox" data-ind="${id}" ${S.ind[id].on ? "checked" : ""}>
         ${d.color ? `<i class="swatch" style="background:var(${d.color})"></i>` : `<i class="swatch vol"></i>`}
@@ -460,6 +561,7 @@ function renderIndicatorPanel() {
       <div class="ind-params">${Object.keys(d.params).map(p => `<label>${PARAM_NAMES[p]}
         <input type="number" min="1" step="${p === "mult" ? "0.5" : "1"}" data-ind="${id}" data-param="${p}"
         value="${S.ind[id][p]}"></label>`).join("")}</div></div>`).join("");
+  bindMovingAverageEditor();
   $$("#ind-panel input[type=checkbox]").forEach(cb => {
     cb.onchange = () => {
       const id = cb.dataset.ind;
@@ -492,8 +594,8 @@ function buildIndicators() {
     lastValueVisible: false, crosshairMarkerVisible: false, ...extra});
   const level = (series, value) => series.createPriceLine({price: value, color: cssVar("--muted"), lineWidth: 1,
     lineStyle: 2, axisLabelVisible: true, title: ""});
-  if (on("ema")) add("ema", "line", S.chart, line(S.chart, color("ema")));
-  if (on("sma")) add("sma", "line", S.chart, line(S.chart, color("sma")));
+  S.mas.filter(m => m.visible).forEach(m =>
+    add(`ma:${m.id}`, "line", S.chart, line(S.chart, m.color, {lineWidth: m.width, lineStyle: m.style})));
   if (on("bb")) ["upper", "mid", "lower"].forEach(k =>
     add("bb", k, S.chart, line(S.chart, color("bb"), {lineWidth: 1, lineStyle: k === "mid" ? 2 : 0})));
   if (on("vwap")) add("vwap", "line", S.chart, line(S.chart, color("vwap"), {lineStyle: 1}));
@@ -527,14 +629,16 @@ function buildIndicators() {
       add(id, "d", chart, line(chart, cssVar("--ind-2"), {lineWidth: 1}));
     }
   }
-  $("#ind-btn").textContent = `📊 Indicadores (${Object.values(S.ind).filter(x => x.on).length})`;
+  const active = S.mas.filter(m => m.visible).length + Object.values(S.ind).filter(x => x.on).length;
+  $("#ind-btn").textContent = `📊 Indicadores (${active})`;
   const range = S.chart.timeScale().getVisibleLogicalRange();
   if (range) S.subs.forEach(s => s.chart.timeScale().setVisibleLogicalRange(range));
 }
 function computeIndicators() {
   const I = window.Indicators, bars = S.bars, closes = bars.map(b => b.close), p = S.ind, out = {};
-  if (p.ema.on) out.ema = {line: I.ema(closes, p.ema.period)};
-  if (p.sma.on) out.sma = {line: I.sma(closes, p.sma.period)};
+  for (const m of S.mas) {
+    if (m.visible) out[`ma:${m.id}`] = {line: I.movingAverage(m.type, I.source(bars, m.source), m.period)};
+  }
   if (p.bb.on) out.bb = I.bollinger(closes, p.bb.period, p.bb.mult);
   if (p.vwap.on) out.vwap = {line: I.vwap(bars)};
   if (p.rsi.on) out.rsi = {line: I.rsi(closes, p.rsi.period)};
@@ -573,8 +677,9 @@ function renderLegends() {
   const item = (cssColor, label, value) => `<span class="lg"><i class="swatch" style="background:var(${cssColor})"></i>${label} <b>${value}</b></span>`;
   const on = id => S.ind[id].on, parts = [`<span class="lg">Ab <b>${p(bar.open)}</b> Máx <b>${p(bar.high)}</b>
     Mín <b>${p(bar.low)}</b> Fech <b>${p(bar.close)}</b></span>`];
-  if (on("ema")) parts.push(item("--ind-1", `MME ${S.ind.ema.period}`, p(d.ema.line[i])));
-  if (on("sma")) parts.push(item("--ind-2", `MMS ${S.ind.sma.period}`, p(d.sma.line[i])));
+  for (const m of S.mas) {
+    if (m.visible && d[`ma:${m.id}`]) parts.push(`<span class="lg">${maSwatch(m)}${maLabel(m)} <b>${p(d[`ma:${m.id}`].line[i])}</b></span>`);
+  }
   if (on("bb")) parts.push(item("--ind-3", `BB ${S.ind.bb.period},${S.ind.bb.mult}`, `${p(d.bb.lower[i])} – ${p(d.bb.upper[i])}`));
   if (on("vwap")) parts.push(item("--ind-4", "VWAP", p(d.vwap.line[i])));
   if (on("volume")) parts.push(`<span class="lg">Vol <b>${f(bar.volume, 0)}</b></span>`);

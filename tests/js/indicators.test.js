@@ -13,6 +13,24 @@ test("médias simples e exponencial", () => {
   close(e[2], 2); close(e[3], 3); close(e[4], 4);
 });
 
+test("médias ponderada, suavizada, Hull, dupla e tripla", () => {
+  close(I.wma([1, 2, 3], 3)[2], 14 / 6);
+  const s = I.smma([1, 2, 3, 4], 2);  // semente 1,5; depois (1,5 + 3)/2 = 2,25; (2,25 + 4)/2 = 3,125
+  close(s[1], 1.5); close(s[2], 2.25); close(s[3], 3.125);
+  const flat = Array(80).fill(42);
+  for (const type of ["SMA", "EMA", "WMA", "SMMA", "HMA", "DEMA", "TEMA"]) {
+    close(I.movingAverage(type, flat, 20)[79], 42);  // média de série constante é a própria constante
+  }
+  assert.equal(I.tema(flat, 20)[55], null);  // 3 × (20 − 1) candles de aquecimento
+  close(I.tema(flat, 20)[57], 42);
+  assert.throws(() => I.movingAverage("XYZ", flat, 5));
+});
+
+test("fonte de preço", () => {
+  const b = [{open: 1, high: 4, low: 2, close: 3}];
+  assert.deepEqual(["close", "open", "hl2", "hlc3", "ohlc4"].map(k => I.source(b, k)[0]), [3, 1, 3, 3, 2.5]);
+});
+
 test("Bollinger: série constante tem bandas coladas na média", () => {
   const b = I.bollinger(Array(25).fill(10), 20, 2);
   assert.equal(b.mid[18], null);

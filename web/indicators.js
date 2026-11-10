@@ -114,5 +114,63 @@
     });
   }
 
-  return {sma, ema, bollinger, rsi, macd, stochastic, vwap};
+  // Média ponderada linear: pesos 1..n, o candle mais recente pesa n.
+  function wma(values, period) {
+    const out = blank(values.length), denom = period * (period + 1) / 2;
+    for (let i = period - 1; i < values.length; i++) {
+      let sum = 0;
+      for (let j = 0; j < period; j++) sum += values[i - j] * (period - j);
+      out[i] = sum / denom;
+    }
+    return out;
+  }
+
+  // Média suavizada de Wilder (SMMA/RMA): semente simples, depois (anterior × (n − 1) + valor) / n.
+  function smma(values, period) {
+    const out = blank(values.length);
+    if (values.length < period) return out;
+    let prev = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    out[period - 1] = prev;
+    for (let i = period; i < values.length; i++) {
+      prev = (prev * (period - 1) + values[i]) / period;
+      out[i] = prev;
+    }
+    return out;
+  }
+
+  // Hull: WMA(2 × WMA(n/2) − WMA(n), √n). Reage rápido com pouco ruído.
+  function hma(values, period) {
+    const half = wma(values, Math.max(1, Math.round(period / 2))), full = wma(values, period);
+    const diff = values.map((_, i) => half[i] !== null && full[i] !== null ? 2 * half[i] - full[i] : null);
+    return fromFirstValue(diff, Math.max(1, Math.round(Math.sqrt(period))), wma);
+  }
+
+  // Dupla e tripla exponencial: reduzem o atraso da MME.
+  function dema(values, period) {
+    const e1 = ema(values, period), e2 = fromFirstValue(e1, period, ema);
+    return values.map((_, i) => e1[i] !== null && e2[i] !== null ? 2 * e1[i] - e2[i] : null);
+  }
+  function tema(values, period) {
+    const e1 = ema(values, period), e2 = fromFirstValue(e1, period, ema), e3 = fromFirstValue(e2, period, ema);
+    return values.map((_, i) => e3[i] !== null ? 3 * e1[i] - 3 * e2[i] + e3[i] : null);
+  }
+
+  const MOVING_AVERAGES = {SMA: sma, EMA: ema, WMA: wma, SMMA: smma, HMA: hma, DEMA: dema, TEMA: tema};
+  function movingAverage(type, values, period) {
+    const fn = MOVING_AVERAGES[type];
+    if (!fn) throw new Error(`Tipo de média desconhecido: ${type}`);
+    return fn(values, Math.max(1, Math.round(period)));
+  }
+
+  // Preço de entrada de um indicador: fechamento, abertura, máxima, mínima ou combinações.
+  const SOURCES = {
+    close: b => b.close, open: b => b.open, high: b => b.high, low: b => b.low,
+    hl2: b => (b.high + b.low) / 2, hlc3: b => (b.high + b.low + b.close) / 3,
+    ohlc4: b => (b.open + b.high + b.low + b.close) / 4,
+  };
+  function source(bars, kind = "close") {
+    return bars.map(SOURCES[kind] || SOURCES.close);
+  }
+
+  return {sma, ema, wma, smma, hma, dema, tema, movingAverage, source, bollinger, rsi, macd, stochastic, vwap};
 });
