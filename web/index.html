@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simulador de Mercado Global — o campo de treinamento do trader</title>
+  <meta name="description" content="Opere B3, Forex, ouro e índices globais com regras reais de mesa proprietária, sem arriscar capital.">
+  <link rel="stylesheet" href="/static/styles.css?v=3">
+</head>
+<body>
+<header class="nav">
+  <div class="logo">Bolsa<span>Sim</span></div>
+  <div class="row" style="flex:0; gap:8px">
+    <a class="btn ghost" href="/auth?mode=login">Acessar Plataforma</a>
+    <a class="btn primary" href="/auth?mode=signup">Criar Conta Gratuita</a>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div>
+      <h1>O ecossistema definitivo para dominar os mercados globais sem arriscar capital real.</h1>
+      <p class="lead">Um simulador com as regras reais do mercado: spread, slippage, margem, ordens OCO e as regras
+        de risco das mesas proprietárias. É o seu campo de treinamento para construir consistência antes do capital real.</p>
+      <div class="ctas">
+        <a class="btn primary" href="/auth?mode=signup">Criar Conta Gratuita</a>
+        <a class="btn" href="/auth?mode=login">Acessar Plataforma</a>
+      </div>
+    </div>
+    <div class="hero-visual" aria-label="Cotações simuladas ao vivo">
+      <div class="muted small">Cotações simuladas · ao vivo</div>
+      <div id="tickers"></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>Treine como profissional, sem pagar o preço do aprendizado</h2>
+    <div class="grid-3">
+      <div class="card feature"><div class="icon">🎯</div><h4>Consistência primeiro</h4>
+        <p>As métricas e o ranking premiam gestão de risco, não sorte: Profit Factor, Sortino, drawdown e consistência diária.</p></div>
+      <div class="card feature"><div class="icon">🧪</div><h4>Teste estratégias complexas</h4>
+        <p>Estruturas de opções com gregas, robôs de tendência e backtests no mesmo motor do ambiente ao vivo.</p></div>
+      <div class="card feature"><div class="icon">📈</div><h4>Experiência de mercado real</h4>
+        <p>Choques de notícias (Payroll, IPCA, FOMC) alargam o spread e secam o book, como acontece no mercado real.</p></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>Recursos</h2>
+    <div class="grid-5">
+      <div class="card feature"><div class="icon">🌎</div><h4>Ativos Globais</h4>
+        <p>WIN, WDO e ações da B3, Forex, ouro e Nasdaq, com motor multimoeda BRL/USD.</p></div>
+      <div class="card feature"><div class="icon">🧩</div><h4>Ordens Institucionais</h4>
+        <p>Mercado, limite, stop e OCO com take profit, stop loss, trailing e breakeven.</p></div>
+      <div class="card feature"><div class="icon">🧮</div><h4>Mesa de Opções</h4>
+        <p>Travas, straddle, borboleta e condor, com payoff e Delta, Gamma, Theta e Vega.</p></div>
+      <div class="card feature"><div class="icon">🛡️</div><h4>Regras de Prop Firm</h4>
+        <p>Perda máxima diária, drawdown estático ou trailing, meta de lucro e stop out.</p></div>
+      <div class="card feature"><div class="icon">🏆</div><h4>Ranking de Desempenho</h4>
+        <p>Classificação por consistência e risco, por temporada, com resets visíveis.</p></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>Como funciona</h2>
+    <div class="grid-5 steps">
+      <div class="card">Crie sua conta gratuita</div>
+      <div class="card">Escolha um desafio com regras de mesa</div>
+      <div class="card">Opere B3 e mercados globais</div>
+      <div class="card">Analise seu Journal</div>
+      <div class="card">Suba no ranking</div>
+    </div>
+  </section>
+</main>
+
+<footer class="disclaimer">
+  <p><b>Aviso:</b> este é um ambiente de simulação. Nenhuma ordem é enviada ao mercado, nenhum valor é real e nada
+    aqui é recomendação de investimento. Resultados simulados não garantem resultados futuros. Cotações sintéticas.</p>
+  <p>Termos de Uso · Política de Privacidade (LGPD) · Encarregado de dados (DPO): dpo@exemplo.com</p>
+</footer>
+
+<script>
+  // Vitrine viva: cotações reais do simulador (endpoint público)
+  let featured = [];
+  async function refresh() {
+    try {
+      if (!featured.length) featured = await (await fetch("/api/featured")).json();
+      const q = await (await fetch("/api/quotes?symbols=" + featured.map(f => f.symbol).join(","))).json();
+      document.getElementById("tickers").innerHTML = featured.filter(f => q[f.symbol]).map(f => {
+        const v = q[f.symbol], mid = (v.bid + v.ask) / 2, chg = v.ref ? mid / v.ref - 1 : 0;
+        const dir = chg > 0 ? "pos" : chg < 0 ? "neg" : "", arrow = chg > 0 ? "▲" : chg < 0 ? "▼" : "•";
+        return `<div class="ticker-row"><span><b>${f.symbol}</b> <span class="muted small">${f.description.split(" (")[0]}</span></span>
+                <span class="mono">${mid.toLocaleString("pt-BR", {maximumFractionDigits: 5})}
+                <span class="${dir} small">${arrow} ${Math.abs(chg * 100).toFixed(2).replace(".", ",")}%</span></span></div>`;
+      }).join("");
+    } catch (e) { /* servidor reiniciando */ }
+  }
+  refresh(); setInterval(refresh, 1500);
+</script>
+</body>
+</html>

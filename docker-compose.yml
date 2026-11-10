@@ -1,0 +1,32 @@
+# Infra da fase 2 (persistência, barramento e IdP). O MVP atual roda sem nada disto.
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg17
+    environment:
+      POSTGRES_USER: sim
+      POSTGRES_PASSWORD: sim-dev-only
+      POSTGRES_DB: simulador
+    ports: ["5432:5432"]
+    volumes:
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+
+  valkey:            # cache, rate limit, ranking ao vivo (ZSET), sessões revogadas
+    image: valkey/valkey:8
+    ports: ["6379:6379"]
+
+  nats:              # barramento de eventos (ticks, ordens, fills, risco) com JetStream
+    image: nats:2.10
+    command: ["-js"]
+    ports: ["4222:4222"]
+
+  keycloak:          # OIDC: login social, MFA, recuperação de senha, Argon2id
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin-dev-only
+    ports: ["8080:8080"]
+
+volumes:
+  pgdata:

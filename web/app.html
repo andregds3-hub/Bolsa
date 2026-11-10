@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plataforma — BolsaSim</title>
+  <link rel="stylesheet" href="/static/styles.css?v=3">
+</head>
+<body>
+<header class="app-header">
+  <a class="logo" href="/">Bolsa<span>Sim</span></a>
+  <nav id="nav" class="tabs" style="border:0; margin:0">
+    <button class="tab active" data-view="trade">Trading</button>
+    <button class="tab" data-view="options">Opções</button>
+    <button class="tab" data-view="auto">Automação</button>
+    <button class="tab" data-view="analytics">Journal</button>
+    <button class="tab" data-view="ranking">Ranking</button>
+    <button class="tab" data-view="calendar">Calendário</button>
+    <button class="tab" data-view="account">Conta</button>
+  </nav>
+  <div class="spacer"></div>
+  <select id="acc-select" style="width:auto" aria-label="Conta simulada"></select>
+  <span class="conn" id="conn">conectando…</span>
+</header>
+<div id="banners"></div>
+<div class="riskbar" id="riskbar" aria-live="polite"></div>
+
+<!-- ── Trading ── -->
+<section class="view" id="view-trade">
+  <div class="trade-layout">
+    <div class="card watch" id="assets">
+      <input id="as-search" type="search" placeholder="Buscar: PETR4, Itaú, HGLG11, DI1…" aria-label="Buscar ativo" autocomplete="off">
+      <div class="chips" id="as-cats" role="tablist" aria-label="Categorias de ativos"></div>
+      <div class="opt-filters hidden" id="as-opt-filters">
+        <select id="as-underlying" aria-label="Ativo-objeto"></select>
+        <select id="as-expiry" aria-label="Vencimento"></select>
+        <select id="as-otype" aria-label="Tipo de opção"><option value="C">Calls</option><option value="P">Puts</option></select>
+      </div>
+      <div class="muted small" id="as-count"></div>
+      <div class="as-list" id="as-list"></div>
+    </div>
+    <div class="card chart-card">
+      <div class="chart-head"><b id="c-sym"></b><span class="px" id="c-px"></span><span class="small" id="c-chg"></span>
+        <span class="muted small" id="c-desc"></span><span id="c-regime"></span></div>
+      <div id="chart"></div>
+    </div>
+    <div class="card ticket" id="ticket">
+      <div class="book">
+        <div class="bid"><div class="muted small">Compra (bid) · <span id="b-bid-size"></span></div><div class="price pos" id="b-bid">—</div></div>
+        <div class="ask"><div class="muted small">Venda (ask) · <span id="b-ask-size"></span></div><div class="price neg" id="b-ask">—</div></div>
+      </div>
+      <div class="muted small" id="b-spread" style="margin:-6px 0 10px; text-align:center"></div>
+      <div class="row">
+        <div class="field"><label for="t-symbol">Ativo</label><input id="t-symbol" readonly title="Escolha o ativo na lista à esquerda"></div>
+        <div class="field"><label for="t-kind">Tipo</label>
+          <select id="t-kind"><option value="MARKET">Mercado</option><option value="LIMIT">Limite</option><option value="STOP">Stop</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="t-qty">Quantidade</label><input id="t-qty" type="number" inputmode="decimal"></div>
+        <div class="field hidden" id="t-price-field"><label for="t-price">Preço</label><input id="t-price" type="number" inputmode="decimal"></div>
+      </div>
+      <div class="muted small" style="margin-bottom:6px">Ordem OCO (distâncias em ticks)</div>
+      <div class="row">
+        <div class="field"><label for="t-sl">Stop loss</label><input id="t-sl" type="number" min="1" value="60"></div>
+        <div class="field"><label for="t-tp">Take profit</label><input id="t-tp" type="number" min="1" value="120"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="t-trail">Trailing</label><input id="t-trail" type="number" min="1" placeholder="—"></div>
+        <div class="field"><label for="t-trail-act">Ativa após</label><input id="t-trail-act" type="number" min="0" placeholder="0"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="t-be">Breakeven aos</label><input id="t-be" type="number" min="1" placeholder="—"></div>
+        <div class="field"><label for="t-be-off">+ ticks</label><input id="t-be-off" type="number" min="0" placeholder="0"></div>
+      </div>
+      <div class="small" id="t-risk" aria-live="polite"></div>
+      <div class="small" id="t-hint"></div>
+      <div class="side-btns">
+        <button class="btn buy" id="t-buy">Comprar</button>
+        <button class="btn sell" id="t-sell">Vender</button>
+      </div>
+    </div>
+    <div class="card bottom">
+      <h3>Posições</h3><div id="positions"></div>
+      <h3 style="margin-top:14px">Ordens pendentes</h3><div id="orders"></div>
+      <h3 style="margin-top:14px">Eventos</h3><div class="log" id="log"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Opções ── -->
+<section class="view hidden" id="view-options">
+  <div class="two-col">
+    <div class="card">
+      <h3>Construtor de estratégias</h3>
+      <div class="field"><label for="op-template">Estrutura</label><select id="op-template"></select></div>
+      <div class="row">
+        <div class="field"><label for="op-spot">Spot (PETR4)</label><input id="op-spot" type="number" step="0.01"></div>
+        <div class="field"><label for="op-vol">Vol. implícita %</label><input id="op-vol" type="number" value="30"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="op-days">Dias úteis</label><input id="op-days" type="number" value="21"></div>
+        <div class="field"><label for="op-rate">Juros % a.a.</label><input id="op-rate" type="number" value="12"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="op-width">Largura strikes %</label><input id="op-width" type="number" value="5"></div>
+        <div class="field"><label for="op-mult">Quantidade (ações)</label><input id="op-mult" type="number" value="100" step="100"></div>
+      </div>
+      <button class="btn primary" id="op-run" style="width:100%">Calcular payoff e gregas</button>
+      <p class="muted small">Black-Scholes-Merton, base 252 dias úteis. Prêmios teóricos no spot atual.</p>
+      <div id="op-legs"></div>
+    </div>
+    <div>
+      <div class="kpis" id="op-kpis"></div>
+      <div class="card">
+        <h3>Payoff da estrutura</h3>
+        <div class="legend"><span><i style="border-color:var(--series-1)"></i>No vencimento</span>
+          <span><i class="dash" style="border-color:var(--series-2)"></i>Hoje (T+0)</span></div>
+        <div class="plot" id="op-chart"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Automação ── -->
+<section class="view hidden" id="view-auto">
+  <div class="two-col">
+    <div class="card">
+      <h3>EA · Seguidor de tendência (cruzamento de médias)</h3>
+      <div class="row">
+        <div class="field"><label for="bt-symbol">Ativo</label><select id="bt-symbol"></select></div>
+        <div class="field"><label for="bt-qty">Quantidade</label><input id="bt-qty" type="number" value="1"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="bt-fast">Média rápida</label><input id="bt-fast" type="number" value="10"></div>
+        <div class="field"><label for="bt-slow">Média lenta</label><input id="bt-slow" type="number" value="40"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="bt-sl">Stop (ticks)</label><input id="bt-sl" type="number" value="60"></div>
+        <div class="field"><label for="bt-tp">Alvo (ticks)</label><input id="bt-tp" type="number" value="150"></div>
+        <div class="field"><label for="bt-trail">Trailing</label><input id="bt-trail" type="number" placeholder="—"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="bt-steps">Segundos simulados</label><input id="bt-steps" type="number" value="6000"></div>
+        <div class="field"><label for="bt-seed">Seed</label><input id="bt-seed" type="number" value="42"></div>
+      </div>
+      <button class="btn primary" id="bt-run" style="width:100%">Rodar backtest</button>
+      <p class="muted small">Roda no mesmo motor de execução da conta ao vivo (spread, slippage, OCO, custos), sobre o
+        mercado sintético com notícias. Mesmo seed, mesmo resultado.</p>
+    </div>
+    <div>
+      <div class="kpis" id="bt-kpis"></div>
+      <div class="card"><h3>Curva de capital do backtest</h3><div id="bt-equity" style="height:300px"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Journal ── -->
+<section class="view hidden" id="view-analytics">
+  <div class="kpis" id="an-kpis"></div>
+  <div class="card" style="margin-bottom:12px"><h3>Curva de capital (equity)</h3><div id="an-equity" style="height:300px"></div></div>
+  <div class="card"><h3>Histórico de trades</h3><div id="an-trades"></div></div>
+</section>
+
+<!-- ── Ranking ── -->
+<section class="view hidden" id="view-ranking">
+  <div class="card">
+    <h3 id="rk-title">Ranking</h3>
+    <p class="muted small">Score 0–100 = 30% Sortino + 25% controle de drawdown + 20% consistência + 15% Profit Factor
+      + 10% retorno. Contas reprovadas ficam inelegíveis; resets são públicos.</p>
+    <div id="rk-table"></div>
+  </div>
+</section>
+
+<!-- ── Calendário ── -->
+<section class="view hidden" id="view-calendar">
+  <div class="card">
+    <div class="row" style="align-items:center"><h3 style="margin:0">Calendário econômico simulado</h3>
+      <div style="flex:0"><button class="btn" id="cal-trigger" style="white-space:nowrap">Disparar notícia de alto impacto em 15 s</button></div></div>
+    <p class="muted small">Na divulgação o motor alarga o spread, retira liquidez do book e salta o preço conforme a
+      surpresa (atual − consenso). O efeito decai exponencialmente.</p>
+    <div id="cal-table"></div>
+  </div>
+</section>
+
+<!-- ── Conta ── -->
+<section class="view hidden" id="view-account">
+  <div class="two-col">
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <h3>Perfil</h3><div id="me"></div>
+        <label class="check"><input type="checkbox" id="pref-classic"> Usar verde/vermelho para alta/baixa (padrão: azul/laranja, seguro para daltonismo)</label>
+        <button class="btn" id="logout">Sair</button>
+      </div>
+      <div class="card">
+        <h3>Privacidade (LGPD)</h3>
+        <p class="muted small">Você pode baixar todos os seus dados ou excluir definitivamente sua conta e seu histórico.</p>
+        <div class="row"><button class="btn" id="lgpd-export">Exportar meus dados</button>
+          <button class="btn danger" id="lgpd-delete">Excluir minha conta</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Contas simuladas</h3>
+      <div id="acc-table"></div>
+      <div class="row" style="margin-top:12px; align-items:flex-end">
+        <div class="field"><label for="new-plan">Novo desafio</label><select id="new-plan"></select></div>
+        <div class="field" style="flex:.4"><label for="new-ccy">Moeda</label><select id="new-ccy"><option>BRL</option><option>USD</option></select></div>
+        <div class="field" style="flex:.5"><button class="btn primary" id="new-acc" style="width:100%">Criar</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="toast-wrap" id="toasts" aria-live="assertive"></div>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="/static/app.js?v=3"></script>
+</body>
+</html>

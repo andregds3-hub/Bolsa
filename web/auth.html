@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar — BolsaSim</title>
+  <link rel="stylesheet" href="/static/styles.css?v=3">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="card auth-card">
+    <a class="logo" href="/">Bolsa<span>Sim</span></a>
+    <div class="tabs" role="tablist" style="margin-top:16px">
+      <button class="tab" data-mode="signup" role="tab">Criar conta</button>
+      <button class="tab" data-mode="login" role="tab">Entrar</button>
+    </div>
+
+    <div class="oauth">
+      <button class="btn" disabled title="OAuth via Keycloak/OIDC — próxima fase">Google</button>
+      <button class="btn" disabled title="OAuth via Keycloak/OIDC — próxima fase">Apple</button>
+    </div>
+
+    <form id="signup" class="hidden" novalidate>
+      <div class="field"><label for="s-name">Nome</label><input id="s-name" autocomplete="name" required></div>
+      <div class="field"><label for="s-email">E-mail</label><input id="s-email" type="email" autocomplete="email" required></div>
+      <div class="field"><label for="s-pass">Senha</label>
+        <input id="s-pass" type="password" autocomplete="new-password" required>
+        <div class="meter" style="margin-top:6px"><i id="s-strength" style="width:0"></i></div>
+        <div class="muted small" id="s-hint">Mínimo de 12 caracteres, com letras e números.</div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="s-plan">Tipo de conta</label>
+          <select id="s-plan">
+            <option value="CHALLENGE_50K">Desafio 50k · DD estático</option>
+            <option value="CHALLENGE_50K_TRAILING">Desafio 50k · DD trailing</option>
+            <option value="PRACTICE">Conta Prática 100k (sem regras)</option>
+          </select></div>
+        <div class="field" style="flex:.5"><label for="s-ccy">Moeda base</label>
+          <select id="s-ccy"><option>BRL</option><option>USD</option></select></div>
+      </div>
+      <label class="check"><input type="checkbox" id="s-terms"> Li e aceito os Termos de Uso.</label>
+      <label class="check"><input type="checkbox" id="s-privacy"> Li e aceito a Política de Privacidade (LGPD).</label>
+      <label class="check"><input type="checkbox" id="s-disclaimer"> Entendo que é um <b>simulador</b>: nada aqui é dinheiro real nem recomendação de investimento.</label>
+      <label class="check"><input type="checkbox" id="s-marketing"> Quero receber novidades por e-mail (opcional).</label>
+      <div class="error" id="s-error" role="alert"></div>
+      <button class="btn primary" style="width:100%" type="submit">Criar Conta Gratuita</button>
+    </form>
+
+    <form id="login" class="hidden" novalidate>
+      <div class="field"><label for="l-email">E-mail</label><input id="l-email" type="email" autocomplete="email" required></div>
+      <div class="field"><label for="l-pass">Senha</label><input id="l-pass" type="password" autocomplete="current-password" required></div>
+      <div class="error" id="l-error" role="alert"></div>
+      <button class="btn primary" style="width:100%" type="submit">Acessar Plataforma</button>
+      <p class="muted small" style="margin-top:12px">Esqueceu a senha? A recuperação por e-mail chega com o Keycloak (próxima fase).</p>
+    </form>
+  </div>
+</div>
+<script>
+  const $ = id => document.getElementById(id);
+  function setMode(mode) {
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.mode === mode));
+    $("signup").classList.toggle("hidden", mode !== "signup");
+    $("login").classList.toggle("hidden", mode !== "login");
+    history.replaceState(null, "", `/auth?mode=${mode}`);
+  }
+  document.querySelectorAll(".tab").forEach(t => t.onclick = () => setMode(t.dataset.mode));
+  setMode(new URLSearchParams(location.search).get("mode") === "login" ? "login" : "signup");
+
+  function errorText(data) {
+    if (!data || !data.detail) return "Erro inesperado.";
+    return typeof data.detail === "string" ? data.detail : data.detail.map(d => d.msg).join("; ");
+  }
+  async function post(url, body, errEl) {
+    errEl.textContent = "";
+    const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    if (r.ok) { location.href = "/app"; return; }
+    errEl.textContent = errorText(await r.json().catch(() => null));
+  }
+  $("s-pass").oninput = e => {
+    const p = e.target.value;
+    const score = [p.length >= 12, /[a-z]/i.test(p) && /\d/.test(p), /[^a-z0-9]/i.test(p), p.length >= 16]
+      .filter(Boolean).length;
+    const bar = $("s-strength");
+    bar.style.width = `${score * 25}%`;
+    bar.parentElement.className = "meter " + (score <= 1 ? "crit" : score === 2 ? "warn" : "");
+    $("s-hint").textContent = ["Muito fraca", "Fraca", "Razoável", "Boa", "Forte"][score] + " — mínimo de 12 caracteres, com letras e números.";
+  };
+  $("signup").onsubmit = e => {
+    e.preventDefault();
+    post("/api/auth/signup", {
+      name: $("s-name").value, email: $("s-email").value, password: $("s-pass").value,
+      plan: $("s-plan").value, base_ccy: $("s-ccy").value,
+      accept_terms: $("s-terms").checked, accept_privacy: $("s-privacy").checked,
+      accept_disclaimer: $("s-disclaimer").checked, marketing: $("s-marketing").checked,
+    }, $("s-error"));
+  };
+  $("login").onsubmit = e => {
+    e.preventDefault();
+    post("/api/auth/login", {email: $("l-email").value, password: $("l-pass").value}, $("l-error"));
+  };
+</script>
+</body>
+</html>
