@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import secrets
 import uuid
@@ -33,7 +34,7 @@ from engine.catalog import (FEATURED, FRONT, INSTRUMENTS, META, NEWS_TEMPLATES, 
                             models_for, update_fx)
 from engine.core import (Account, AccountStatus, BracketSpec, ExecutionEngine, FillModel, FxConverter, Order,
                          OrderRejected, OrderType, Side)
-from engine.market import CandleSeries, EconomicEvent, MarketSimulator
+from engine.market import Candle, CandleSeries, EconomicEvent, MarketSimulator, aggregate, synthetic_history, traded_volume
 from engine.options import TEMPLATES, Leg, analyze, template
 from engine.strategies import SmaCrossTrend, Strategy, backtest
 
@@ -41,6 +42,8 @@ log = logging.getLogger("simulador")
 WEB = Path(__file__).resolve().parent.parent / "web"
 TICK_S = 0.25
 PREWARM_STEP_S = 3
+HISTORY_MINUTES = 360                  # 6 h de candles de 1 min antes da abertura simulada
+TIMEFRAMES = (5, 15, 30, 60, 300, 900)  # segundos
 MAX_SUBSCRIPTIONS = 400
 NEWS_EVERY = timedelta(minutes=4)
 BLACKOUT = timedelta(minutes=2)
@@ -70,7 +73,12 @@ class SimState:
         self.notices: list[dict] = []
         self.engine = ExecutionEngine(INSTRUMENTS, self.fx, FillModel(), emit=self._on_event)
         self.sim = MarketSimulator(default_models(), seed=seed)
-        self.candles = {symbol: CandleSeries(5) for symbol in INSTRUMENTS}
+        self.history_rng = random.Random(seed)
+        # 5 s para os timeframes curtos (1 h); 1 min para os longos (10 h). Opções: só 5 s (séries curtas).
+        self.candles = {symbol: CandleSeries(5, maxlen=720) for symbol in INSTRUMENTS}
+        self.candles_1m = {s: CandleSeries(60, maxlen=600) for s, m in self.sim.models.items() if not m.option_type}
+        self.volume: dict[str, float] = {}      # volume acumulado na sessão (exibido e usado no VWAP)
+        self.last_mid: dict[str, float] = {}
         self.users: dict[str, User] = {}
         self.emails: dict[str, str] = {}
         self.owner: dict[str, str] = {}          # account_id → user_id ("bot" para EAs da casa)
@@ -93,14 +101,41 @@ class SimState:
         self.engine.regimes.update(result.regimes)
         for q in result.quotes:
             self.engine.on_quote(q, now)
-            self.candles[q.symbol].add(now, float((q.bid + q.ask) / 2))
+            self.record_trade(q, now)
             for bot in self.bots:
                 bot.on_quote(q, now)
         for ev in result.released:
             self.notices.append({"topic": "news.released", "event": event_json(ev, now)})
 
+    def record_trade(self, q, now: datetime) -> None:
+        """Cada cotação vira um negócio simulado: atualiza candles e volume."""
+        symbol, mid = q.symbol, float((q.bid + q.ask) / 2)
+        prev = self.last_mid.get(symbol)
+        moved = abs(mid - prev) / float(INSTRUMENTS[symbol].tick_size) if prev is not None else 0.0
+        volume = traded_volume(float(q.bid_size + q.ask_size) / 2, moved)
+        self.last_mid[symbol] = mid
+        self.volume[symbol] = self.volume.get(symbol, 0.0) + volume
+        self.candles[symbol].add(now, mid, volume)
+        if symbol in self.candles_1m:
+            self.candles_1m[symbol].add(now, mid, volume)
+
+    def seed_history(self, end: datetime, minutes: int) -> None:
+        """Horas de candles de 1 min antes da abertura, para os indicadores já terem dados."""
+        base: dict[str, list] = {}
+        for symbol, m in self.sim.models.items():
+            if not m.underlying:
+                base[symbol] = synthetic_history(m, end, minutes, self.history_rng)
+                self.candles_1m[symbol].extend(base[symbol])
+        for symbol, m in self.sim.models.items():  # espelhos: fracionário, vencimento seguinte, contrato cheio
+            if m.underlying and not m.option_type and m.underlying in base:
+                ratio = m.depth / max(1.0, self.sim.models[m.underlying].depth)
+                self.candles_1m[symbol].extend([
+                    Candle(c.time, c.open * m.basis, c.high * m.basis, c.low * m.basis, c.close * m.basis,
+                           round(c.volume * ratio, 2)) for c in base[m.underlying]])
+
     def bootstrap(self, prewarm_seconds: int) -> None:
         start = self.now() - timedelta(seconds=prewarm_seconds)
+        self.seed_history(start, HISTORY_MINUTES)
         self.spawn_bots(start)
         if prewarm_seconds >= 300:  # uma notícia no histórico para o gráfico já mostrar o choque
             self.schedule_news(start + timedelta(seconds=prewarm_seconds // 2))
@@ -207,6 +242,7 @@ def quote_json(state: SimState, symbol: str) -> dict:
     model = state.sim.models.get(symbol)
     return {"bid": float(q.bid), "ask": float(q.ask), "bid_size": float(q.bid_size), "ask_size": float(q.ask_size),
             "ref": model.ref_price if model else None,  # fechamento de referência → variação do dia
+            "volume": round(state.volume.get(symbol, 0.0), 2),  # acumulado na sessão
             "spread_mult": float(regime.spread_mult) if regime else 1.0,
             "depth_mult": float(regime.depth_mult) if regime else 1.0}
 
@@ -495,10 +531,16 @@ async def plans():
 
 
 @router.get("/api/candles/{symbol}")
-async def candles(symbol: str, state: SimState = Depends(get_state)):
+async def candles(symbol: str, tf: int = 5, state: SimState = Depends(get_state)):
+    """Candles OHLCV no timeframe `tf` (segundos): 5, 15, 30, 60, 300 ou 900."""
     if symbol not in state.candles:
         raise HTTPException(404, "Instrumento desconhecido.")
-    return [asdict(c) for c in state.candles[symbol].candles]
+    if tf not in TIMEFRAMES:
+        raise HTTPException(422, f"Timeframe inválido. Use um de {TIMEFRAMES}.")
+    series = state.candles_1m[symbol] if tf >= 60 and symbol in state.candles_1m else state.candles[symbol]
+    source = list(series.candles)
+    bars = source if tf == series.interval_s else aggregate(source, tf)
+    return [asdict(c) for c in bars]
 
 
 @router.get("/api/quotes")

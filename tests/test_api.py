@@ -57,6 +57,9 @@ def test_full_trading_flow_journal_ranking_and_lgpd(client):
     assert any(r["alias"] == me["alias"] for r in board) and any(r["bot"] for r in board)
 
     assert client.post("/api/options/analyze", json={"template": "long_straddle", "spot": 38}).status_code == 200
+    bars = client.get("/api/candles/PETR4?tf=300").json()  # 5 min, sobre o histórico de 6 h
+    assert len(bars) >= 70 and all(c["volume"] > 0 for c in bars)
+    assert client.get("/api/candles/PETR4?tf=7").status_code == 422
     assert client.get("/api/me/export").json()["user"]["email"] == "ana@example.com"
     assert client.delete("/api/me").status_code == 204
     assert client.get("/api/me").status_code == 401

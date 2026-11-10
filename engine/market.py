@@ -203,6 +203,7 @@ class Candle:
     high: float
     low: float
     close: float
+    volume: float = 0.0
 
 
 class CandleSeries:
@@ -210,12 +211,58 @@ class CandleSeries:
         self.interval_s = interval_s
         self.candles: deque[Candle] = deque(maxlen=maxlen)
 
-    def add(self, ts: datetime, price: float) -> Candle:
+    def add(self, ts: datetime, price: float, volume: float = 0.0) -> Candle:
         bucket = int(ts.timestamp()) // self.interval_s * self.interval_s
         last = self.candles[-1] if self.candles else None
         if last and last.time == bucket:
             last.high, last.low, last.close = max(last.high, price), min(last.low, price), price
+            last.volume += volume
             return last
-        candle = Candle(bucket, price, price, price, price)
+        candle = Candle(bucket, price, price, price, price, volume)
         self.candles.append(candle)
         return candle
+
+    def extend(self, candles: list[Candle]) -> None:
+        self.candles.extend(candles)
+
+
+def aggregate(candles: list[Candle], interval_s: int) -> list[Candle]:
+    """Agrupa candles menores em um timeframe maior (ex.: 5 s → 15 s, 1 min → 5 min)."""
+    out: list[Candle] = []
+    for c in candles:
+        bucket = c.time // interval_s * interval_s
+        last = out[-1] if out else None
+        if last and last.time == bucket:
+            last.high, last.low, last.close = max(last.high, c.high), min(last.low, c.low), c.close
+            last.volume += c.volume
+        else:
+            out.append(Candle(bucket, c.open, c.high, c.low, c.close, c.volume))
+    return out
+
+
+def traded_volume(depth: float, ticks_moved: float) -> float:
+    """Volume simulado de um negócio: fração da liquidez do topo, maior quando o preço anda."""
+    return round(depth * 0.08 * (1 + min(5.0, ticks_moved)), 2)
+
+
+def synthetic_history(m: SymbolModel, end: datetime, minutes: int, rng: random.Random) -> list[Candle]:
+    """Histórico de candles de 1 min que TERMINA no preço atual do modelo (continuidade com o ao vivo).
+    GBM com 4 sub-passos por candle para gerar máxima e mínima realistas."""
+    sub, tick = 4, float(m.instrument.tick_size)
+    sigma = m.annual_vol * math.sqrt(60 / sub / MarketSimulator.SECONDS_PER_YEAR)
+    cum, path = 0.0, [0.0]
+    for _ in range(minutes * sub):
+        cum += sigma * rng.gauss(0, 1) - 0.5 * sigma * sigma
+        path.append(cum)
+    prices = [m.price * math.exp(x - cum) for x in path]
+    last_bucket = int(end.timestamp()) // 60 * 60 - 60
+    quotes_per_min = 240 * m.activity
+    candles = []
+    for i in range(minutes):
+        seg = prices[i * sub:(i + 1) * sub + 1]
+        o, c = seg[0], seg[-1]
+        moved = abs(c - o) / tick if tick else 0.0
+        volume = traded_volume(m.depth, moved / max(1.0, quotes_per_min ** 0.5)) * quotes_per_min
+        candles.append(Candle(last_bucket - (minutes - 1 - i) * 60, o, max(seg), min(seg), c,
+                              round(volume * rng.uniform(0.6, 1.4), 2)))
+    return candles

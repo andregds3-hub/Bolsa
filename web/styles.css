@@ -28,6 +28,11 @@
   --gold: #f2a900;
   --series-1: #2563eb;
   --series-2: #9333ea;
+  /* Indicadores: ordem fixa de cores, distinta da polaridade alta/baixa (inclusive na paleta para daltônicos) */
+  --ind-1: #7c3aed;
+  --ind-2: #0891b2;
+  --ind-3: #db2777;
+  --ind-4: #a16207;
   --shadow: 0 1px 2px rgba(14, 26, 43, .06), 0 6px 20px rgba(14, 26, 43, .06);
   --radius: 12px;
   --font: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -55,6 +60,10 @@ html[data-theme="dark"] {
   --critical: #f05252;
   --series-1: #60a5fa;
   --series-2: #c084fc;
+  --ind-1: #a78bfa;
+  --ind-2: #22d3ee;
+  --ind-3: #f472b6;
+  --ind-4: #facc15;
   --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
   color-scheme: dark;
 }
@@ -271,7 +280,50 @@ html[data-theme="dark"] .banner.warning { background: #2a1f0b; border-color: #6b
 .chart-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
 .chart-head b { font-size: 18px; }
 .chart-head .px { font: 800 24px var(--mono); }
-#chart { flex: 1; min-height: 0; }
+/* ── Análise gráfica ── */
+.chart-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border); background: var(--panel-2); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.seg button { border: 0; border-right: 1px solid var(--border); background: transparent; color: var(--text-2);
+  padding: 5px 10px; font: 600 12px var(--font); cursor: pointer; min-width: 34px; }
+.seg button:last-child { border-right: 0; }
+.seg button:hover { background: var(--panel-2); color: var(--text); }
+.seg button.active { background: var(--accent); color: var(--accent-ink); }
+#draw-group { margin-left: auto; }
+.ind-wrap { position: relative; }
+.ind-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 15; width: 380px; max-height: 460px; overflow: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 10px; }
+.ind-head { display: flex; gap: 8px; align-items: baseline; padding: 2px 4px 8px; border-bottom: 1px solid var(--grid); }
+.ind-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; padding: 6px 4px;
+  border-bottom: 1px solid var(--grid); }
+.ind-row .check { margin: 0; align-items: center; }
+.ind-params { grid-column: 1 / -1; display: flex; gap: 8px; padding-left: 26px; }
+.ind-params:empty { display: none; }
+.ind-params label { display: flex; align-items: center; gap: 4px; margin: 0; }
+.ind-params input { width: 64px; padding: 3px 6px; font-size: 12px; }
+.swatch { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.swatch.vol { height: 10px; width: 8px; background: linear-gradient(var(--up), var(--down)); }
+.chart-main { position: relative; flex: 1; min-height: 360px; }
+#chart { position: absolute; inset: 0; }
+.chart-legend { position: absolute; top: 6px; left: 10px; right: 100px; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px 12px;
+  font-size: 12px; color: var(--text-2); pointer-events: none; }
+.lg b { font-family: var(--mono); font-weight: 600; color: var(--text); }
+.subchart { position: relative; height: 120px; border-top: 1px solid var(--border); }
+.sub-legend { position: absolute; top: 4px; left: 10px; z-index: 3; display: flex; gap: 12px; font-size: 12px;
+  color: var(--text-2); pointer-events: none; }
+.draw-layer { position: absolute; inset: 0; z-index: 4; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.draw-layer.active { pointer-events: auto; cursor: crosshair; }
+.draw-layer .d-line { stroke: var(--accent); stroke-width: 2; }
+.draw-layer .d-dot { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
+.draw-layer .d-rect { fill: var(--accent); fill-opacity: .1; stroke: var(--accent); stroke-width: 1.5; }
+.draw-layer .d-fib { stroke: var(--muted); stroke-width: 1; }
+.draw-layer .d-fib.golden { stroke: var(--gold); stroke-width: 2; }
+.draw-layer .d-guide { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
+.draw-layer .d-ruler.up { fill: var(--up); fill-opacity: .12; stroke: var(--up); }
+.draw-layer .d-ruler.down { fill: var(--down); fill-opacity: .12; stroke: var(--down); }
+.draw-layer .d-label { fill: var(--text-2); font: 11px var(--font); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
+.draw-layer .d-label.strong { fill: var(--text); font-weight: 700; }
+.draw-layer .preview { opacity: .6; }
 .ticket .side-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
 .ticket .side-btns .btn { padding: 12px; }
 .book { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; text-align: center; }

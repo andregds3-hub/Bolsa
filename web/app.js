@@ -6,7 +6,8 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const S = {
   me: null, accounts: [], accountId: null, account: null, instruments: {}, quotes: {}, symbol: null,
   fav: [], cat: "FAV", query: "", visible: [],
-  chart: null, candles: null, lastCandle: null, loadingCandles: false, lines: [], linesKey: "",
+  chart: null, candles: null, bars: [], tf: Number(localStorage.getItem("timeframe")) || 60, volBase: null,
+  ind: null, indSeries: {}, subs: [], hoverIndex: null, drawing: null, loadingCandles: false, lines: [], linesKey: "",
   nextEvent: null, ws: null, view: "trade", lastMid: {}, clockSkew: 0, bannerHtml: "",
 };
 const TZ_SHIFT = -new Date().getTimezoneOffset() * 60; // Lightweight Charts exibe o tempo em UTC
@@ -298,9 +299,26 @@ function candleColors() {
 function setupChart() {
   S.chart = LightweightCharts.createChart($("#chart"), {
     ...chartTheme({timeVisible: true, secondsVisible: true}), autoSize: true,
+    rightPriceScale: {borderColor: cssVar("--border"), minimumWidth: PRICE_SCALE_WIDTH},
     crosshair: {mode: LightweightCharts.CrosshairMode.Normal},
   });
   S.candles = S.chart.addCandlestickSeries(candleColors());
+  // painéis de osciladores acompanham o zoom/rolagem do gráfico principal
+  S.chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (range) S.subs.forEach(s => s.chart.timeScale().setVisibleLogicalRange(range));
+  });
+  S.chart.subscribeCrosshairMove(param => {
+    S.hoverIndex = param && param.logical !== undefined && param.logical !== null ? Math.round(param.logical) : null;
+    renderLegends();
+  });
+  S.drawing = new DrawingLayer($("#chart-main"), {
+    chart: S.chart, series: S.candles, getBars: () => S.bars, getTf: () => S.tf,
+    fmtPrice: v => price(v, S.symbol),
+    onChange: items => localStorage.setItem(`drawings:${S.symbol}`, JSON.stringify(items)),
+    onToolEnd: renderDrawTools,
+  });
+  setupChartTools();
+  buildIndicators();
 }
 async function selectSymbol(sym) {
   const inst = S.instruments[sym];
@@ -313,11 +331,14 @@ async function selectSymbol(sym) {
   subscribe();
   S.candles.applyOptions({priceFormat: {type: "price", precision: inst.decimals, minMove: inst.tick_size}});
   try {
-    const data = await api(`/api/candles/${sym}`);
+    const data = await api(`/api/candles/${sym}?tf=${S.tf}`);
     if (S.symbol !== sym) return; // usuário trocou de ativo durante o carregamento
-    const bars = data.map(c => ({time: c.time + TZ_SHIFT, open: c.open, high: c.high, low: c.low, close: c.close}));
-    S.candles.setData(bars);
-    S.lastCandle = bars.length ? {...bars[bars.length - 1]} : null;
+    S.bars = data.map(c => ({time: c.time + TZ_SHIFT, open: c.open, high: c.high, low: c.low, close: c.close,
+      volume: c.volume}));
+    S.candles.setData(S.bars.map(ohlc));
+    S.volBase = null;
+    refreshIndicators(true);
+    S.drawing.setItems(JSON.parse(localStorage.getItem(`drawings:${sym}`) || "[]"));
     S.chart.timeScale().scrollToRealTime();
   } finally {
     if (S.symbol === sym) S.loadingCandles = false;
@@ -329,13 +350,18 @@ async function selectSymbol(sym) {
 function updateCandle(ts) {
   const q = S.quotes[S.symbol];
   if (!q || S.loadingCandles) return;
-  const mid = (q.bid + q.ask) / 2, bucket = Math.floor(ts / 5) * 5 + TZ_SHIFT, c = S.lastCandle;
+  const mid = (q.bid + q.ask) / 2, bucket = Math.floor(ts / S.tf) * S.tf + TZ_SHIFT, c = S.bars[S.bars.length - 1];
+  // volume do tick = quanto o acumulado da sessão andou desde o último tick
+  const traded = S.volBase === null || q.volume === undefined ? 0 : Math.max(0, q.volume - S.volBase);
+  S.volBase = q.volume === undefined ? null : q.volume;
   if (c && c.time === bucket) {
-    c.high = Math.max(c.high, mid); c.low = Math.min(c.low, mid); c.close = mid;
+    c.high = Math.max(c.high, mid); c.low = Math.min(c.low, mid); c.close = mid; c.volume += traded;
   } else if (!c || bucket > c.time) {
-    S.lastCandle = {time: bucket, open: mid, high: mid, low: mid, close: mid};
+    S.bars.push({time: bucket, open: mid, high: mid, low: mid, close: mid, volume: traded});
   } else return;
-  S.candles.update({...S.lastCandle});
+  S.candles.update(ohlc(S.bars[S.bars.length - 1]));
+  refreshIndicators(false);
+  S.drawing.render();
   $("#c-px").textContent = price(mid, S.symbol);
   const v = change(q);
   $("#c-chg").textContent = v == null ? "" : `${changeText(v)} no dia`;
@@ -343,6 +369,226 @@ function updateCandle(ts) {
   $("#c-regime").innerHTML = q.spread_mult > 1.05
     ? `<span class="tag warning">⚠ Regime de notícia: spread ×${num(q.spread_mult, 1)} · liquidez ${pct(q.depth_mult, 0)}</span>` : "";
 }
+// ── análise gráfica: timeframes, indicadores e desenhos ──
+const PRICE_SCALE_WIDTH = 86;  // mesma largura em todos os painéis: candles e osciladores ficam alinhados
+const CHART_TFS = [[5, "5s"], [15, "15s"], [60, "1m"], [300, "5m"], [900, "15m"]];
+const IND_DEFS = {
+  ema: {label: "MME", name: "Média móvel exponencial", pane: "main", params: {period: 9}, color: "--ind-1",
+    info: "Média que dá mais peso aos preços recentes e reage rápido. Preço acima dela sugere tendência de alta."},
+  sma: {label: "MMS", name: "Média móvel simples", pane: "main", params: {period: 21}, color: "--ind-2",
+    info: "Média dos últimos N fechamentos. A MME curta cruzando a MMS longa é um sinal clássico de virada de tendência."},
+  bb: {label: "Bollinger", name: "Bandas de Bollinger", pane: "main", params: {period: 20, mult: 2}, color: "--ind-3",
+    info: "Média ± 2 desvios-padrão. Bandas estreitas indicam baixa volatilidade, que costuma anteceder movimentos fortes."},
+  vwap: {label: "VWAP", name: "Preço médio ponderado por volume", pane: "main", params: {}, color: "--ind-4",
+    info: "Preço médio do dia ponderado pelo volume. Grandes investidores usam como referência de preço justo."},
+  volume: {label: "Volume", name: "Volume negociado", pane: "volume", params: {},
+    info: "Quantidade negociada em cada candle. Movimentos com volume alto costumam ser mais confiáveis."},
+  rsi: {label: "IFR", name: "Índice de Força Relativa (RSI)", pane: "sub", params: {period: 14}, color: "--ind-1",
+    info: "Oscila de 0 a 100. Acima de 70 o ativo está sobrecomprado; abaixo de 30, sobrevendido."},
+  macd: {label: "MACD", name: "Convergência/divergência de médias", pane: "sub", params: {fast: 12, slow: 26, signal: 9},
+    color: "--ind-1", info: "Diferença entre duas médias exponenciais. Quando cruza a linha de sinal, o momento está mudando."},
+  stoch: {label: "Estocástico", name: "Estocástico lento", pane: "sub", params: {period: 14, smooth: 3}, color: "--ind-1",
+    info: "Onde o fechamento está na faixa máxima–mínima do período. Acima de 80 sobrecomprado, abaixo de 20 sobrevendido."},
+};
+const PARAM_NAMES = {period: "Período", mult: "Desvios", fast: "Rápida", slow: "Lenta", signal: "Sinal", smooth: "Suavização"};
+const DRAW_TOOLS = [[null, "↖", "Cursor: mover e dar zoom no gráfico"], ["trend", "╱", "Linha de tendência"],
+  ["hline", "―", "Linha horizontal (suporte/resistência)"], ["rect", "▭", "Retângulo (zona de preço)"],
+  ["fib", "Fib", "Fibonacci de retração"], ["ruler", "📏", "Régua: mede a variação em pontos, % e candles"]];
+const ohlc = ({time, open, high, low, close}) => ({time, open, high, low, close});
+const withAlpha = (color, alpha) => /^#[0-9a-f]{6}$/i.test(color) ? color + alpha : color;
+
+function loadIndicatorSettings() {
+  const settings = Object.fromEntries(Object.entries(IND_DEFS).map(([id, d]) =>
+    [id, {on: ["ema", "sma", "volume"].includes(id), ...d.params}]));
+  try {
+    const saved = JSON.parse(localStorage.getItem("indicators") || "{}");
+    for (const id of Object.keys(settings)) Object.assign(settings[id], saved[id] || {});
+  } catch (e) { /* configuração corrompida: usa o padrão */ }
+  return settings;
+}
+function setupChartTools() {
+  if (!CHART_TFS.some(([tf]) => tf === S.tf)) S.tf = 60;
+  S.ind = loadIndicatorSettings();
+  $("#tf-group").innerHTML = CHART_TFS.map(([tf, label]) =>
+    `<button data-tf="${tf}" title="Candles de ${label}">${label}</button>`).join("");
+  $$("#tf-group button").forEach(b => {
+    b.onclick = () => { S.tf = +b.dataset.tf; localStorage.setItem("timeframe", S.tf); renderTfButtons(); selectSymbol(S.symbol); };
+  });
+  $("#draw-group").innerHTML = DRAW_TOOLS.map(([tool, icon, title]) =>
+    `<button data-tool="${tool || ""}" title="${title}" aria-label="${title}">${icon}</button>`).join("") +
+    `<button data-act="undo" title="Desfazer o último desenho" aria-label="Desfazer o último desenho">↶</button>` +
+    `<button data-act="clear" title="Apagar os desenhos deste ativo" aria-label="Apagar os desenhos deste ativo">🗑</button>`;
+  $$("#draw-group [data-tool]").forEach(b => { b.onclick = () => { S.drawing.setTool(b.dataset.tool || null); renderDrawTools(); }; });
+  $("#draw-group [data-act=undo]").onclick = () => S.drawing.undo();
+  $("#draw-group [data-act=clear]").onclick = () => {
+    if (S.drawing.items.length && confirm("Apagar todos os desenhos deste ativo?")) S.drawing.clear();
+  };
+  $("#ind-btn").onclick = e => {
+    e.stopPropagation();
+    const open = !$("#ind-panel").classList.toggle("hidden");
+    $("#ind-btn").setAttribute("aria-expanded", String(open));
+  };
+  document.addEventListener("click", e => {
+    if (e.target.closest(".ind-wrap")) return;
+    $("#ind-panel").classList.add("hidden");
+    $("#ind-btn").setAttribute("aria-expanded", "false");
+  });
+  renderTfButtons();
+  renderIndicatorPanel();
+  renderDrawTools();
+}
+function renderTfButtons() {
+  $$("#tf-group button").forEach(b => b.classList.toggle("active", +b.dataset.tf === S.tf));
+}
+function renderDrawTools() {
+  const active = S.drawing ? S.drawing.tool : null;
+  $$("#draw-group [data-tool]").forEach(b => b.classList.toggle("active", (b.dataset.tool || null) === active));
+}
+function onIndicatorsChanged() {
+  localStorage.setItem("indicators", JSON.stringify(S.ind));
+  buildIndicators();
+  refreshIndicators(true);
+}
+function renderIndicatorPanel() {
+  $("#ind-panel").innerHTML = `<div class="ind-head"><b>Indicadores</b>
+    <span class="muted small">calculados sobre os candles do gráfico</span></div>` +
+    Object.entries(IND_DEFS).map(([id, d]) => `<div class="ind-row">
+      <label class="check"><input type="checkbox" data-ind="${id}" ${S.ind[id].on ? "checked" : ""}>
+        ${d.color ? `<i class="swatch" style="background:var(${d.color})"></i>` : `<i class="swatch vol"></i>`}
+        <span><b>${d.label}</b> <span class="muted small">${d.name}</span></span></label>
+      <span class="info" tabindex="0" title="${esc(d.info)}">?</span>
+      <div class="ind-params">${Object.keys(d.params).map(p => `<label>${PARAM_NAMES[p]}
+        <input type="number" min="1" step="${p === "mult" ? "0.5" : "1"}" data-ind="${id}" data-param="${p}"
+        value="${S.ind[id][p]}"></label>`).join("")}</div></div>`).join("");
+  $$("#ind-panel input[type=checkbox]").forEach(cb => {
+    cb.onchange = () => {
+      const id = cb.dataset.ind;
+      S.ind[id].on = cb.checked;
+      if (cb.checked && !localStorage.getItem(`seen:${id}`)) {  // estudo: explica o indicador na primeira vez
+        toast(`📘 ${IND_DEFS[id].name}: ${IND_DEFS[id].info}`);
+        localStorage.setItem(`seen:${id}`, "1");
+      }
+      onIndicatorsChanged();
+    };
+  });
+  $$("#ind-panel input[data-param]").forEach(input => {
+    input.onchange = () => {
+      const {ind, param} = input.dataset, value = Number(input.value);
+      if (!(value > 0)) { input.value = S.ind[ind][param]; return; }
+      S.ind[ind][param] = param === "mult" ? value : Math.round(value);
+      onIndicatorsChanged();
+    };
+  });
+}
+function buildIndicators() {
+  if (!S.chart) return;
+  Object.values(S.indSeries).flat().forEach(s => s.chart.removeSeries(s.series));
+  S.subs.forEach(sub => { sub.chart.remove(); sub.el.remove(); });
+  S.indSeries = {};
+  S.subs = [];
+  const on = id => S.ind[id].on, color = id => cssVar(IND_DEFS[id].color);
+  const add = (id, key, chart, series) => (S.indSeries[id] = S.indSeries[id] || []).push({key, chart, series});
+  const line = (chart, c, extra = {}) => chart.addLineSeries({color: c, lineWidth: 2, priceLineVisible: false,
+    lastValueVisible: false, crosshairMarkerVisible: false, ...extra});
+  const level = (series, value) => series.createPriceLine({price: value, color: cssVar("--muted"), lineWidth: 1,
+    lineStyle: 2, axisLabelVisible: true, title: ""});
+  if (on("ema")) add("ema", "line", S.chart, line(S.chart, color("ema")));
+  if (on("sma")) add("sma", "line", S.chart, line(S.chart, color("sma")));
+  if (on("bb")) ["upper", "mid", "lower"].forEach(k =>
+    add("bb", k, S.chart, line(S.chart, color("bb"), {lineWidth: 1, lineStyle: k === "mid" ? 2 : 0})));
+  if (on("vwap")) add("vwap", "line", S.chart, line(S.chart, color("vwap"), {lineStyle: 1}));
+  if (on("volume")) {
+    add("volume", "volume", S.chart, S.chart.addHistogramSeries({priceScaleId: "vol", priceFormat: {type: "volume"},
+      priceLineVisible: false, lastValueVisible: false}));
+    S.chart.priceScale("vol").applyOptions({scaleMargins: {top: 0.8, bottom: 0}});
+  }
+  for (const id of ["rsi", "macd", "stoch"]) {  // osciladores: um painel abaixo do gráfico para cada um
+    if (!on(id)) continue;
+    const el = document.createElement("div");
+    el.className = "subchart";
+    el.innerHTML = `<div class="sub-legend"></div>`;
+    $("#subcharts").append(el);
+    const chart = LightweightCharts.createChart(el, {...chartTheme({visible: false}), autoSize: true,
+      handleScroll: false, handleScale: false, crosshair: {mode: LightweightCharts.CrosshairMode.Normal},
+      rightPriceScale: {borderColor: cssVar("--border"), minimumWidth: PRICE_SCALE_WIDTH}});
+    S.subs.push({id, chart, el});
+    if (id === "rsi") {
+      const s = line(chart, color("rsi"));
+      [70, 30].forEach(v => level(s, v));
+      add(id, "line", chart, s);
+    } else if (id === "macd") {
+      add(id, "hist", chart, chart.addHistogramSeries({priceLineVisible: false, lastValueVisible: false}));
+      add(id, "macd", chart, line(chart, color("macd")));
+      add(id, "signal", chart, line(chart, cssVar("--ind-2"), {lineWidth: 1}));
+    } else {
+      const k = line(chart, color("stoch"));
+      [80, 20].forEach(v => level(k, v));
+      add(id, "k", chart, k);
+      add(id, "d", chart, line(chart, cssVar("--ind-2"), {lineWidth: 1}));
+    }
+  }
+  $("#ind-btn").textContent = `📊 Indicadores (${Object.values(S.ind).filter(x => x.on).length})`;
+  const range = S.chart.timeScale().getVisibleLogicalRange();
+  if (range) S.subs.forEach(s => s.chart.timeScale().setVisibleLogicalRange(range));
+}
+function computeIndicators() {
+  const I = window.Indicators, bars = S.bars, closes = bars.map(b => b.close), p = S.ind, out = {};
+  if (p.ema.on) out.ema = {line: I.ema(closes, p.ema.period)};
+  if (p.sma.on) out.sma = {line: I.sma(closes, p.sma.period)};
+  if (p.bb.on) out.bb = I.bollinger(closes, p.bb.period, p.bb.mult);
+  if (p.vwap.on) out.vwap = {line: I.vwap(bars)};
+  if (p.rsi.on) out.rsi = {line: I.rsi(closes, p.rsi.period)};
+  if (p.macd.on) out.macd = I.macd(closes, p.macd.fast, p.macd.slow, p.macd.signal);
+  if (p.stoch.on) out.stoch = I.stochastic(bars, p.stoch.period, p.stoch.smooth);
+  return out;
+}
+// full: recarrega a série inteira; senão, só o último candle (a cada tick).
+function refreshIndicators(full) {
+  if (!S.bars.length) return;
+  const data = computeIndicators(), last = S.bars.length - 1;
+  const upColor = withAlpha(cssVar("--up"), "88"), downColor = withAlpha(cssVar("--down"), "88");
+  S.indData = data;
+  for (const [id, list] of Object.entries(S.indSeries)) {
+    for (const {key, series} of list) {
+      const point = i => {
+        const b = S.bars[i];
+        if (id === "volume") return {time: b.time, value: b.volume || 0, color: b.close >= b.open ? upColor : downColor};
+        const v = data[id][key][i];
+        if (v === null || v === undefined) return {time: b.time};  // espaço vazio mantém os painéis alinhados
+        return key === "hist" ? {time: b.time, value: v, color: v >= 0 ? upColor : downColor} : {time: b.time, value: v};
+      };
+      if (full) series.setData(S.bars.map((_, i) => point(i)));
+      else series.update(point(last));
+    }
+  }
+  renderLegends();
+}
+// Legenda com os valores do candle sob o cursor (ou do último): texto na cor do texto, cor só na amostra.
+function renderLegends() {
+  const d = S.indData, n = S.bars.length;
+  if (!d || !n) return;
+  const i = S.hoverIndex !== null && S.hoverIndex >= 0 && S.hoverIndex < n ? S.hoverIndex : n - 1, bar = S.bars[i];
+  const p = v => v === null || v === undefined ? "—" : price(v, S.symbol);
+  const f = (v, digits) => v === null || v === undefined ? "—" : num(v, digits);
+  const item = (cssColor, label, value) => `<span class="lg"><i class="swatch" style="background:var(${cssColor})"></i>${label} <b>${value}</b></span>`;
+  const on = id => S.ind[id].on, parts = [`<span class="lg">Ab <b>${p(bar.open)}</b> Máx <b>${p(bar.high)}</b>
+    Mín <b>${p(bar.low)}</b> Fech <b>${p(bar.close)}</b></span>`];
+  if (on("ema")) parts.push(item("--ind-1", `MME ${S.ind.ema.period}`, p(d.ema.line[i])));
+  if (on("sma")) parts.push(item("--ind-2", `MMS ${S.ind.sma.period}`, p(d.sma.line[i])));
+  if (on("bb")) parts.push(item("--ind-3", `BB ${S.ind.bb.period},${S.ind.bb.mult}`, `${p(d.bb.lower[i])} – ${p(d.bb.upper[i])}`));
+  if (on("vwap")) parts.push(item("--ind-4", "VWAP", p(d.vwap.line[i])));
+  if (on("volume")) parts.push(`<span class="lg">Vol <b>${f(bar.volume, 0)}</b></span>`);
+  $("#chart-legend").innerHTML = parts.join("");
+  for (const sub of S.subs) {
+    const s = S.ind[sub.id];
+    $(".sub-legend", sub.el).innerHTML =
+      sub.id === "rsi" ? item("--ind-1", `IFR ${s.period}`, f(d.rsi.line[i], 1)) :
+      sub.id === "macd" ? item("--ind-1", `MACD ${s.fast},${s.slow}`, f(d.macd.macd[i], 3)) +
+        item("--ind-2", `Sinal ${s.signal}`, f(d.macd.signal[i], 3)) + `<span class="lg">Hist <b>${f(d.macd.hist[i], 3)}</b></span>` :
+      item("--ind-1", `%K ${s.period}`, f(d.stoch.k[i], 1)) + item("--ind-2", `%D ${s.smooth}`, f(d.stoch.d[i], 1));
+  }
+}
+
 function renderPriceLines() {
   if (!S.candles) return;
   const a = S.account, lines = [];
@@ -814,6 +1060,9 @@ function applyTheme() {
   if (S.chart) {
     S.chart.applyOptions(chartTheme());
     S.candles.applyOptions(candleColors());
+    buildIndicators();  // recria séries e painéis com as cores do tema novo
+    refreshIndicators(true);
+    S.drawing.render();
   }
   Object.values(lineCharts).forEach(c => {
     c.chart.applyOptions(chartTheme());

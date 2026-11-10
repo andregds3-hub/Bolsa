@@ -9,7 +9,8 @@ backtest, Trading Journal, ranking, autenticação com LGPD e frontend web.
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe main.py            # http://127.0.0.1:8000
-.\.venv\Scripts\python.exe -m pytest -q        # testes
+.\.venv\Scripts\python.exe -m pytest -q        # testes do servidor
+node --test tests/js                            # testes dos indicadores (JavaScript)
 ```
 
 No PyCharm: abra `main.py` e rode (Shift+F10). O estado fica em memória e recomeça a cada execução.
@@ -26,6 +27,8 @@ No PyCharm: abra `main.py` e rode (Shift+F10). O estado fica em memória e recom
 | `engine/catalog.py` | Catálogo B3 (~900 instrumentos): ~150 ações/units + fracionário, FIIs, Fiagro, FI-Infra, ETFs, BDRs, futuros (WIN, IND, WDO, DOL, DI1, BGI, CCM, ICF) com vencimentos calculados pela data, séries de opções de 10 ativos; EURUSD, XAUUSD, US100; planos e calendário de notícias. Preços são referências sintéticas |
 | `api/` | FastAPI: REST, WebSocket, autenticação (scrypt + sessão HMAC), LGPD |
 | `web/` | Landing, cadastro/login e workspace (Lightweight Charts via CDN) |
+| `web/indicators.js` | Indicadores técnicos (MMS, MME, Bollinger, VWAP, IFR, MACD, Estocástico) em funções puras |
+| `web/drawings.js` | Ferramentas de desenho: tendência, horizontal, retângulo, Fibonacci e régua |
 | `db/migrations/001_init.sql` | Schema PostgreSQL/TimescaleDB da fase 2 |
 | `docker-compose.yml` | Infra da fase 2: Postgres+Timescale, Valkey, NATS, Keycloak |
 
