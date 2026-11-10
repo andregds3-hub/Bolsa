@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plataforma — BolsaSim</title>
-  <link rel="stylesheet" href="/static/styles.css?v=3">
+  <script>document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+    if (localStorage.getItem("palette") === "cb") document.documentElement.dataset.palette = "cb";</script>
+  <link rel="stylesheet" href="/static/styles.css?v=4">
 </head>
 <body>
 <header class="app-header">
@@ -19,10 +21,18 @@
     <button class="tab" data-view="account">Conta</button>
   </nav>
   <div class="spacer"></div>
-  <select id="acc-select" style="width:auto" aria-label="Conta simulada"></select>
+  <button class="lvl" id="lvl" title="Sua jornada: nível, XP e conquistas">
+    <span class="n" id="lvl-n">1</span>
+    <span class="t"><b id="lvl-title">Aprendiz</b><span id="lvl-xp">0 XP</span><span class="xpbar"><i id="lvl-bar" style="width:0"></i></span></span>
+  </button>
+  <select id="acc-select" aria-label="Conta simulada"></select>
+  <button class="icon-btn" id="theme-btn" aria-label="Alternar tema claro/escuro" title="Alternar tema claro/escuro">🌙</button>
   <span class="conn" id="conn">conectando…</span>
 </header>
+<div class="tape" aria-label="Cotações dos seus favoritos"><div class="tape-track" id="tape"></div></div>
 <div id="banners"></div>
+<div class="tip-box" id="tip" role="note"><span aria-hidden="true">💡</span><span id="tip-text"></span>
+  <button class="btn sm" id="tip-next">Próxima dica</button></div>
 <div class="riskbar" id="riskbar" aria-live="polite"></div>
 
 <!-- ── Trading ── -->
@@ -52,24 +62,25 @@
       <div class="muted small" id="b-spread" style="margin:-6px 0 10px; text-align:center"></div>
       <div class="row">
         <div class="field"><label for="t-symbol">Ativo</label><input id="t-symbol" readonly title="Escolha o ativo na lista à esquerda"></div>
-        <div class="field"><label for="t-kind">Tipo</label>
+        <div class="field"><label for="t-kind">Tipo <span class="info" tabindex="0" title="Mercado: executa já, no melhor preço disponível. Limite: só executa no seu preço ou melhor. Stop: vira ordem a mercado quando o preço atinge o gatilho.">?</span></label>
           <select id="t-kind"><option value="MARKET">Mercado</option><option value="LIMIT">Limite</option><option value="STOP">Stop</option></select></div>
       </div>
       <div class="row">
-        <div class="field"><label for="t-qty">Quantidade</label><input id="t-qty" type="number" inputmode="decimal"></div>
+        <div class="field"><label for="t-qty">Quantidade <span class="info" tabindex="0" title="Ações e units: lote padrão de 100 (use o ticker com F para 1 a 99). FIIs, ETFs e BDRs: lote 1. Futuros: contratos. Opções: lote 100.">?</span></label><input id="t-qty" type="number" inputmode="decimal"></div>
         <div class="field hidden" id="t-price-field"><label for="t-price">Preço</label><input id="t-price" type="number" inputmode="decimal"></div>
       </div>
-      <div class="muted small" style="margin-bottom:6px">Ordem OCO (distâncias em ticks)</div>
+      <div class="muted small" style="margin-bottom:6px">Ordem OCO (distâncias em ticks)
+        <span class="info" tabindex="0" title="OCO = One Cancels the Other: stop e alvo são enviados juntos; quando um executa, o outro é cancelado. Tick = menor variação de preço do ativo.">?</span></div>
       <div class="row">
-        <div class="field"><label for="t-sl">Stop loss</label><input id="t-sl" type="number" min="1" value="60"></div>
-        <div class="field"><label for="t-tp">Take profit</label><input id="t-tp" type="number" min="1" value="120"></div>
+        <div class="field"><label for="t-sl">Stop loss <span class="info" tabindex="0" title="Stop loss: distância, em ticks, em que a posição é zerada para limitar a perda. Define o seu risco antes de entrar.">?</span></label><input id="t-sl" type="number" min="1" value="60"></div>
+        <div class="field"><label for="t-tp">Take profit <span class="info" tabindex="0" title="Take profit: alvo de lucro, em ticks. Uma boa prática é buscar alvo maior que o stop (payoff acima de 1).">?</span></label><input id="t-tp" type="number" min="1" value="120"></div>
       </div>
       <div class="row">
-        <div class="field"><label for="t-trail">Trailing</label><input id="t-trail" type="number" min="1" placeholder="—"></div>
+        <div class="field"><label for="t-trail">Trailing <span class="info" tabindex="0" title="Trailing stop: o stop acompanha o preço a esta distância quando o trade anda a favor, protegendo o lucro. Nunca volta.">?</span></label><input id="t-trail" type="number" min="1" placeholder="—"></div>
         <div class="field"><label for="t-trail-act">Ativa após</label><input id="t-trail-act" type="number" min="0" placeholder="0"></div>
       </div>
       <div class="row">
-        <div class="field"><label for="t-be">Breakeven aos</label><input id="t-be" type="number" min="1" placeholder="—"></div>
+        <div class="field"><label for="t-be">Breakeven aos <span class="info" tabindex="0" title="Breakeven: ao atingir este lucro em ticks, o stop vai para o preço de entrada (+ ticks para cobrir custos). O trade deixa de ter risco de perda.">?</span></label><input id="t-be" type="number" min="1" placeholder="—"></div>
         <div class="field"><label for="t-be-off">+ ticks</label><input id="t-be-off" type="number" min="0" placeholder="0"></div>
       </div>
       <div class="small" id="t-risk" aria-live="polite"></div>
@@ -156,6 +167,17 @@
 
 <!-- ── Journal ── -->
 <section class="view hidden" id="view-analytics">
+  <div class="card journey" id="journey">
+    <div>
+      <h3>Sua jornada</h3>
+      <div class="big" id="jr-title">Nível 1 · Aprendiz</div>
+      <div id="jr-xp" class="small"></div>
+      <div class="xpbar"><i id="jr-bar" style="width:0"></i></div>
+      <p class="small" style="opacity:.85">XP: conquistas + 5 por trade + 20 por dia positivo.
+        As conquistas premiam disciplina, não sorte.</p>
+    </div>
+    <div class="ach-grid" id="jr-ach"></div>
+  </div>
   <div class="kpis" id="an-kpis"></div>
   <div class="card" style="margin-bottom:12px"><h3>Curva de capital (equity)</h3><div id="an-equity" style="height:300px"></div></div>
   <div class="card"><h3>Histórico de trades</h3><div id="an-trades"></div></div>
@@ -188,7 +210,8 @@
     <div>
       <div class="card" style="margin-bottom:12px">
         <h3>Perfil</h3><div id="me"></div>
-        <label class="check"><input type="checkbox" id="pref-classic"> Usar verde/vermelho para alta/baixa (padrão: azul/laranja, seguro para daltonismo)</label>
+        <label class="check"><input type="checkbox" id="pref-cb"> Paleta para daltonismo: azul/laranja para alta/baixa (padrão: verde/vermelho)</label>
+        <label class="check"><input type="checkbox" id="pref-dark"> Tema escuro</label>
         <button class="btn" id="logout">Sair</button>
       </div>
       <div class="card">
@@ -212,6 +235,6 @@
 
 <div class="toast-wrap" id="toasts" aria-live="assertive"></div>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=5"></script>
 </body>
 </html>

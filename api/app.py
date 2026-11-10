@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from api import auth
 from engine.analytics import compute_metrics, ranking_score
+from engine.gamification import progress
 from engine.catalog import (FEATURED, FRONT, INSTRUMENTS, META, NEWS_TEMPLATES, PLANS, default_models, make_account,
                             models_for, update_fx)
 from engine.core import (Account, AccountStatus, BracketSpec, ExecutionEngine, FillModel, FxConverter, Order,
@@ -614,6 +615,14 @@ async def analytics(account_id: str, user: User = Depends(current_user), state: 
             "trades": trades[-300:][::-1], "base_ccy": acc.base_ccy, "initial_balance": money(acc.initial_balance)}
 
 
+@router.get("/api/accounts/{account_id}/progress")
+async def account_progress(account_id: str, user: User = Depends(current_user), state: SimState = Depends(get_state)):
+    """Nível, XP e conquistas da conta (gamificação)."""
+    acc = owned_account(state, user, account_id)
+    return progress(state.engine.trades.get(account_id, []), account_metrics(state, acc), acc,
+                    lambda symbol: META.get(symbol, {}).get("category", "OUTRO"))
+
+
 @router.get("/api/leaderboard")
 async def leaderboard(state: SimState = Depends(get_state)):
     rows = []
@@ -681,6 +690,7 @@ async def stream(ws: WebSocket):
         return
     user_id = auth.read_token(ws.cookies.get(SESSION_COOKIE))
     if user_id not in state.users:
+        await ws.accept()  # aceitar antes de fechar: só assim o código 4401 chega ao navegador
         await ws.close(code=4401)
         return
     await ws.accept()
