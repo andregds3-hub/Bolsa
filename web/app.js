@@ -316,6 +316,10 @@ function setupChart() {
     fmtPrice: v => price(v, S.symbol),
     onChange: items => localStorage.setItem(`drawings:${S.symbol}`, JSON.stringify(items)),
     onToolEnd: renderDrawTools,
+    onSelect: index => {
+      const del = $("#draw-group [data-act=delete]");
+      if (del) del.disabled = index === null;
+    },
   });
   setupChartTools();
   buildIndicators();
@@ -416,9 +420,11 @@ function setupChartTools() {
   });
   $("#draw-group").innerHTML = DRAW_TOOLS.map(([tool, icon, title]) =>
     `<button data-tool="${tool || ""}" title="${title}" aria-label="${title}">${icon}</button>`).join("") +
+    `<button data-act="delete" disabled title="Apagar o desenho selecionado (tecla Delete)" aria-label="Apagar o desenho selecionado">✕</button>` +
     `<button data-act="undo" title="Desfazer o último desenho" aria-label="Desfazer o último desenho">↶</button>` +
     `<button data-act="clear" title="Apagar os desenhos deste ativo" aria-label="Apagar os desenhos deste ativo">🗑</button>`;
   $$("#draw-group [data-tool]").forEach(b => { b.onclick = () => { S.drawing.setTool(b.dataset.tool || null); renderDrawTools(); }; });
+  $("#draw-group [data-act=delete]").onclick = () => S.drawing.removeSelected();
   $("#draw-group [data-act=undo]").onclick = () => S.drawing.undo();
   $("#draw-group [data-act=clear]").onclick = () => {
     if (S.drawing.items.length && confirm("Apagar todos os desenhos deste ativo?")) S.drawing.clear();

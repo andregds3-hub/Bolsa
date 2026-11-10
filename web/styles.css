@@ -313,8 +313,19 @@ html[data-theme="dark"] .banner.warning { background: #2a1f0b; border-color: #6b
   color: var(--text-2); pointer-events: none; }
 .draw-layer { position: absolute; inset: 0; z-index: 4; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .draw-layer.active { pointer-events: auto; cursor: crosshair; }
+.draw-layer.dragging { pointer-events: auto; }
+.draw-layer.dragging, .draw-layer.dragging * { cursor: grabbing !important; }
+/* fora do modo desenho, só os desenhos recebem o mouse; o resto passa para o gráfico (rolar/zoom) */
+.draw-layer .d-item { pointer-events: visiblePainted; cursor: move; }
+.draw-layer.active .d-item { cursor: crosshair; }
+.draw-layer .d-hit { stroke: transparent; stroke-width: 12; fill: none; pointer-events: stroke; }
+.draw-layer .d-label, .draw-layer .d-guide, .draw-layer .d-fib, .draw-layer .preview { pointer-events: none; }
+.draw-layer .d-handle { fill: var(--panel); stroke: var(--accent); stroke-width: 2; cursor: grab; pointer-events: all; }
+.draw-layer .d-item.selected .d-line { stroke-width: 3; }
+.draw-layer .d-item.selected .d-rect, .draw-layer .d-item.selected .d-ruler { stroke-dasharray: 5 3; }
+.draw-layer .d-item.selected .d-fib { stroke: var(--accent); }
 .draw-layer .d-line { stroke: var(--accent); stroke-width: 2; }
-.draw-layer .d-dot { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
+.seg button:disabled { opacity: .35; cursor: not-allowed; background: transparent; }
 .draw-layer .d-rect { fill: var(--accent); fill-opacity: .1; stroke: var(--accent); stroke-width: 1.5; }
 .draw-layer .d-fib { stroke: var(--muted); stroke-width: 1; }
 .draw-layer .d-fib.golden { stroke: var(--gold); stroke-width: 2; }
